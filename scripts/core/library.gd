@@ -21,6 +21,7 @@ signal changed
 signal book_changed(id: String)
 signal chapter_saved(id: String, index: int)
 signal saved  # something changed and is about to be written
+signal progress_changed(id: String)  # reading position moved (last_read was stamped)
 
 ## Book fields kept in library.json; the rest is in meta/<id>.json.
 const INDEX_FIELDS := ["progress", "last_read", "text_stamp"]
@@ -165,6 +166,7 @@ func set_progress(id: String, chapter: int, paragraph: int) -> void:
 	b.progress = {"chapter": chapter, "paragraph": paragraph}
 	b.last_read = Time.get_unix_time_from_system()
 	save_index()
+	progress_changed.emit(id)
 
 
 # --- bookmarks ---------------------------------------------------------------
