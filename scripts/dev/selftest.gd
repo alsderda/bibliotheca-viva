@@ -1,11 +1,12 @@
 extends Node
-## Dev checks for text rules, TTS pacing, plugin helpers and each plugin's own checks:  godot --path . -- --profile=selftest --selftest
+## Dev checks that every script compiles, then text rules, TTS pacing, plugin helpers and each plugin's own checks:  godot --path . -- --profile=selftest --selftest
 
 var failures := 0
 
 
 func _ready() -> void:
 	OS.low_processor_usage_mode = false
+	_scripts_compile()
 	TextRules.rules.clear()
 	_rules()
 	_sentences()
@@ -16,6 +17,29 @@ func _ready() -> void:
 	await _pacing()
 	print("SELFTEST ", "PASSED" if failures == 0 else "FAILED (%d)" % failures)
 	get_tree().quit(failures)
+
+
+# Loads every script in the project, so one the app never opens (a dev script, a widget not in use yet) still has to compile.
+func _scripts_compile() -> void:
+	var files := PackedStringArray()
+	_find_scripts("res://", files)
+	var broken := PackedStringArray()
+	for path in files:
+		var script := load(path) as GDScript
+		if script == null or not script.can_instantiate():
+			broken.append(path)
+	check("all %d scripts compile" % files.size(), broken, PackedStringArray())
+
+
+func _find_scripts(dir: String, out: PackedStringArray) -> void:
+	if dir.trim_suffix("/") in ["res://.godot", "res://android", "res://export", "res://plugins"]:
+		return
+	for sub in DirAccess.get_directories_at(dir):
+		if not sub.begins_with("."):
+			_find_scripts(dir.path_join(sub), out)
+	for file in DirAccess.get_files_at(dir):
+		if file.get_extension() == "gd":
+			out.append(dir.path_join(file))
 
 
 func check(name: String, got: Variant, want: Variant) -> void:
