@@ -1375,7 +1375,7 @@ func _apply_style() -> void:
 	_text.add_theme_color_override("selection_color", Color(UiTheme.ACCENT, 0.3))
 	_text.add_theme_constant_override("line_separation", int(Settings.get_value("line_spacing")) + int(size * 0.2))
 	_text.add_theme_constant_override("paragraph_separation", int(Settings.get_value("paragraph_gap")))
-	_text.horizontal_alignment = text_alignment()
+	apply_alignment(_text)
 	_text.add_theme_constant_override("text_highlight_h_padding", 6)
 	_text.add_theme_constant_override("text_highlight_v_padding", 3)
 	var dark: bool = c.bg.get_luminance() < 0.5
@@ -1392,6 +1392,13 @@ static func text_alignment() -> HorizontalAlignment:
 		"justify": return HORIZONTAL_ALIGNMENT_FILL
 		"center": return HORIZONTAL_ALIGNMENT_CENTER
 	return HORIZONTAL_ALIGNMENT_LEFT
+
+
+## Sets the reader's alignment on a label. When justified, a paragraph's only line is left
+## alone like the last line of a longer one, instead of being stretched across the column.
+static func apply_alignment(rt: RichTextLabel) -> void:
+	rt.horizontal_alignment = text_alignment()
+	rt.justification_flags &= ~TextServer.JUSTIFICATION_DO_NOT_SKIP_SINGLE_LINE
 
 
 func _set_status_colors(c: Dictionary) -> void:
