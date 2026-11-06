@@ -49,6 +49,8 @@ Build, run and test instructions, and the layout of the code, are in [docs/DEVEL
 
 ## Disclaimer
 
+For sync, use a WebDAV storage (or account) just for this app, with no important data on it. The app should only ever write inside its own sync folder, but a bug or an update could break that.
+
 Bibliothéca-viva is provided "as is", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose and noninfringement. Use it at your own risk. See sections 15 and 16 of the [GPL-3.0](LICENSE).
 
 ## Known limits
