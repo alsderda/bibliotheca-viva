@@ -7,7 +7,7 @@
 #   installer/build.sh apk --release        # export/android/bibliotheca-viva-<version>.apk (needs a release keystore)
 #   installer/build.sh apk --install        # also install the APK on the connected device with adb
 #   installer/build.sh exe                  # export/windows/bibliotheca-viva.exe (+ licenses)
-#   installer/build.sh installer            # export/bibliotheca-viva-Setup-<version>.exe (Windows only)
+#   installer/build.sh installer            # export/bibliotheca-viva-Setup-<version>.exe
 #   installer/build.sh exe apk              # several at once
 #
 # Needs Godot 4.7 with export templates. Godot doesn't add itself to PATH, so if
@@ -15,8 +15,9 @@
 # path and saves it in installer/godot_path.local. On Windows, use the
 # *_console.exe so Godot's output shows up in the terminal.
 #
-# The installer target needs Windows (Git Bash): it compiles installer/Setup.cs
-# with the C# compiler that comes with Windows. The APK target also needs a
+# The installer target compiles installer/Setup.cs: on Windows (Git Bash) with
+# the C# compiler that comes with Windows, elsewhere with Mono's mcs
+# (brew install mono). The APK target also needs a
 # JDK 17 and the Android SDK; JAVA_HOME and ANDROID_HOME override the usual
 # locations. See docs/DEVELOPMENT.md.
 set -euo pipefail
@@ -73,8 +74,8 @@ if [ ${#targets[@]} -eq 0 ]; then
 fi
 want() { [[ " ${targets[*]} " == *" $1 "* ]]; }
 
-if want installer && [ "$os" != windows ]; then
-	die "the Windows installer can only be built on Windows (Git Bash)"
+if want installer && [ "$os" != windows ] && ! command -v mcs >/dev/null; then
+	die "building the Windows installer outside Windows needs Mono's mcs (brew install mono)"
 fi
 
 # --- find Godot ------------------------------------------------------------------
@@ -190,16 +191,23 @@ build_installer() {
 	echo "== Windows installer"
 	local zip=export/payload.zip setup="export/bibliotheca-viva-Setup-$version.exe" csc fw
 	zip_dir export/windows "$zip"
-	local windir; windir="$(cygpath -u "${WINDIR:-C:\\Windows}")"
-	csc="$windir/Microsoft.NET/Framework64/v4.0.30319/csc.exe"
-	[ -f "$csc" ] || csc="$windir/Microsoft.NET/Framework/v4.0.30319/csc.exe"
-	[ -f "$csc" ] || die "C# compiler (csc.exe) not found. It ships with .NET Framework 4."
-	fw="$(cygpath -w "$(dirname "$csc")")"
 	rm -f "$setup"
-	"$csc" -nologo -target:winexe -optimize+ "-win32icon:$(cygpath -w assets/icons/icon.ico)" "-out:$(cygpath -w "$setup")" \
-		"-resource:$(cygpath -w "$zip"),payload.zip" \
-		"-reference:$fw\\System.IO.Compression.dll" "-reference:$fw\\System.IO.Compression.FileSystem.dll" \
-		-reference:System.Windows.Forms.dll "$(cygpath -w installer/Setup.cs)" || die "compiling the installer failed"
+	if [ "$os" = windows ]; then
+		local windir; windir="$(cygpath -u "${WINDIR:-C:\\Windows}")"
+		csc="$windir/Microsoft.NET/Framework64/v4.0.30319/csc.exe"
+		[ -f "$csc" ] || csc="$windir/Microsoft.NET/Framework/v4.0.30319/csc.exe"
+		[ -f "$csc" ] || die "C# compiler (csc.exe) not found. It ships with .NET Framework 4."
+		fw="$(cygpath -w "$(dirname "$csc")")"
+		"$csc" -nologo -target:winexe -optimize+ "-win32icon:$(cygpath -w assets/icons/icon.ico)" "-out:$(cygpath -w "$setup")" \
+			"-resource:$(cygpath -w "$zip"),payload.zip" \
+			"-reference:$fw\\System.IO.Compression.dll" "-reference:$fw\\System.IO.Compression.FileSystem.dll" \
+			-reference:System.Windows.Forms.dll "$(cygpath -w installer/Setup.cs)" || die "compiling the installer failed"
+	else
+		# Mono builds the same .NET Framework 4.5 program as Windows' csc.
+		mcs -nologo -target:winexe -optimize+ -sdk:4.5 -win32icon:assets/icons/icon.ico "-out:$setup" \
+			"-resource:$zip,payload.zip" -reference:System.IO.Compression.dll -reference:System.IO.Compression.FileSystem.dll \
+			-reference:System.Windows.Forms.dll -reference:System.Drawing.dll installer/Setup.cs || die "compiling the installer failed"
+	fi
 	rm -f "$zip"
 	built+=("$setup")
 }
