@@ -47,6 +47,10 @@ An ebook reader with text-to-speech, library sync over WebDAV, and a plugin syst
 
 Build, run and test instructions, and the layout of the code, are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
+## Disclaimer
+
+Bibliothéca-viva is provided "as is", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose and noninfringement. Use it at your own risk. See sections 15 and 16 of the [GPL-3.0](LICENSE).
+
 ## Known limits
 
 - The Web tab is desktop-only (godot-wry doesn't support Android/iOS). It's a native layer drawn on top of the app, so app popovers can't overlap it.
