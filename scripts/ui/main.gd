@@ -508,6 +508,7 @@ func _rebuild_topbar() -> void:
 		var back := UI.icon_button("arrow_left", "Back", current.go_back)
 		back.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		row.add_child(back)
+	var title_fills := false
 	var custom_title := current.title_control()
 	if custom_title:
 		custom_title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -515,9 +516,16 @@ func _rebuild_topbar() -> void:
 	else:
 		var title := UI.label(current.page_title(), "H2")
 		title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		if current.has_back():
+		if compact:
+			# The tabs get their own row below, so the title can use all the
+			# space up to the action buttons.
 			title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-			title.custom_minimum_size.x = 80 if compact else 160
+			title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			title.clip_text = true
+			title_fills = true
+		elif current.has_back():
+			title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+			title.custom_minimum_size.x = 160
 			title.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 			title.size_flags_stretch_ratio = 0.5
 			title.clip_text = true
@@ -551,7 +559,8 @@ func _rebuild_topbar() -> void:
 	current.build_actions(actions)
 
 	if compact:
-		row.add_child(UI.spacer())
+		if not title_fills:
+			row.add_child(UI.spacer())
 		row.add_child(actions)
 		_top_rows.add_child(row)
 		if names.size() > 0:
