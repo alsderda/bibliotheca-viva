@@ -1,0 +1,62 @@
+# Fails a PR that changes the app but doesn't raise the version (see "Versions" in docs/DEVELOPMENT.md).
+# A ruleset on main makes this check required; only the repo admin can merge past it.
+name: Version check
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  version-bump:
+    name: Version bump
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check version bump
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Paths that end up in the app. Docs, README and CI changes don't need a bump.
+          CODE='^(scripts|scenes|addons|assets|installer)/|^project\.godot$|^export_presets\.cfg$'
+
+          changed=$(git diff --name-only "$BASE...$HEAD" | grep -E "$CODE" || true)
+          if [ -z "$changed" ]; then
+            echo "No app files changed, no version bump needed."
+            exit 0
+          fi
+          echo "App files changed:"
+          echo "$changed" | sed 's/^/  /'
+
+          get() { git show "$1:$2" | sed -n "s/^$3=\"\{0,1\}\([^\"]*\)\"\{0,1\}$/\1/p" | head -1; }
+          old_name=$(get "$BASE" project.godot 'config\/version')
+          new_name=$(get "$HEAD" project.godot 'config\/version')
+          old_code=$(get "$BASE" project.godot 'config\/version_code')
+          new_code=$(get "$HEAD" project.godot 'config\/version_code')
+          preset_code=$(get "$HEAD" export_presets.cfg 'version\/code')
+
+          echo "Version name: $old_name -> $new_name"
+          echo "Version code: $old_code -> $new_code (export_presets.cfg: $preset_code)"
+
+          fail=0
+          if [ "$new_name" = "$old_name" ] || \
+             [ "$(printf '%s\n%s\n' "$old_name" "$new_name" | sort -V | tail -1)" != "$new_name" ]; then
+            echo "::error file=project.godot::config/version must go up (main has $old_name, this PR has $new_name)."
+            fail=1
+          fi
+          if ! [ "$new_code" -gt "$old_code" ] 2>/dev/null; then
+            echo "::error file=project.godot::config/version_code must go up (main has $old_code, this PR has $new_code)."
+            fail=1
+          fi
+          if [ "$preset_code" != "$new_code" ]; then
+            echo "::error file=export_presets.cfg::version/code ($preset_code) must match config/version_code ($new_code)."
+            fail=1
+          fi
+          exit $fail

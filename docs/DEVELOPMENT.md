@@ -34,6 +34,8 @@ Versions follow Android's scheme: a version name people read and a version code 
 - **Version name** (`major.minor.patch`, e.g. `0.0.1`): `config/version` in `project.godot`. Every PR raises the patch number by 1, unless there's a reason not to (a PR that only touches docs, or a bigger release that raises minor or major and resets the numbers after it).
 - **Version code** (e.g. `10`): `config/version_code` in `project.godot` and `version/code` in the Android preset in `export_presets.cfg`. Both must be the same; `installer/build.sh` stops if they aren't. Every PR raises it by 10, unless there's a reason not to. The steps of 10 leave room for an extra build between two PRs, such as a hotfix.
 
+A GitHub check (`.github/workflows/version-check.yml`) enforces this: a PR that changes anything in `scripts/`, `scenes/`, `addons/`, `assets/`, `installer/`, `project.godot` or `export_presets.cfg` fails unless the version name and code both go up and the two codes match. A ruleset on `main` makes the check required, and only the repo admin can merge past it ("Merge without waiting for requirements") when there's a reason to skip the bump.
+
 The Android build and the Windows file properties pick up the version name from `project.godot` (their own fields in the presets are left empty). Settings → About shows both.
 
 ### App icon
