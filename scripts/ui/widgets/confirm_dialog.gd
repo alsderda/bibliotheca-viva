@@ -6,11 +6,13 @@ extends Control
 ##   danger:  red confirm button and icon, for removing things
 ##   alt, alt_icon, alt_then: an optional second choice, a button next to the confirm one
 ##   input:   adds a text field with this text (placeholder: input_hint); `then` gets what's typed
+##   require: with input, the confirm button stays disabled until this word is typed (any case)
 
 signal closed
 
 var _then: Callable
 var _input: LineEdit
+var _require := ""
 
 
 static func open(host: Control, opts: Dictionary, then: Callable) -> ConfirmDialog:
@@ -68,6 +70,7 @@ func _build(o: Dictionary) -> void:
 		_input.custom_minimum_size.y = 40
 		_input.select_all_on_focus = true
 		_input.text_submitted.connect(func(_t): _confirm())
+		_require = o.get("require", "")
 		col.add_child(_input)
 		_input.grab_focus.call_deferred()
 
@@ -81,6 +84,9 @@ func _build(o: Dictionary) -> void:
 			if alt_then.is_valid():
 				alt_then.call()))
 	var ok := UI.button(o.get("confirm", "OK"), o.get("confirm_icon", ""), "PrimaryButton", _confirm)
+	if _require != "":
+		ok.disabled = true
+		_input.text_changed.connect(func(_t): ok.disabled = not _typed_required())
 	if danger:
 		var pad := Vector4(16, 9, 16, 9)
 		ok.add_theme_stylebox_override("normal", UiTheme.box(UiTheme.BAD, 8, Color.TRANSPARENT, 0, pad))
@@ -93,11 +99,17 @@ func _build(o: Dictionary) -> void:
 func _confirm() -> void:
 	if is_queued_for_deletion():
 		return  # Enter in the text field also reaches _unhandled_key_input
+	if not _typed_required():
+		return
 	_close()
 	if _input:
 		_then.call(_input.text)
 	else:
 		_then.call()
+
+
+func _typed_required() -> bool:
+	return _require == "" or _input.text.strip_edges().to_lower() == _require.to_lower()
 
 
 func _close() -> void:

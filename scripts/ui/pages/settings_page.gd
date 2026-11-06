@@ -680,6 +680,16 @@ func _choose_folder() -> void:
 	_folder_dialog.popup_centered_ratio(0.6)
 
 
+## Plain http:// sends the username and password unencrypted with every request,
+## so the user has to type "confirm" before such an address is saved.
+func _confirm_insecure_sync(address: String, then: Callable) -> void:
+	ConfirmDialog.open(main, {
+		"title": "Use an unencrypted connection?", "detail": address, "icon": "shield", "danger": true,
+		"text": "This address starts with http://, not https://. Your username, password and library will be sent unencrypted, so anyone on the same network (public Wi-Fi, for example) can read them. Use https:// if your server supports it.\n\nType confirm to use this address anyway.",
+		"input": "", "input_hint": "confirm", "require": "confirm", "confirm": "Use http://",
+	}, func(_typed): then.call())
+
+
 func _sync() -> void:
 	var url := _line_edit(Sync.server_url())
 	url.placeholder_text = "https://example.com/dav/"
@@ -690,7 +700,7 @@ func _sync() -> void:
 	var result := UI.label("", "Small", true)
 	result.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	result.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	var save := UI.button("Save and test", "check", "", func():
+	var apply := func():
 		Sync.configure(url.text, user.text, password.text)
 		password.text = ""
 		password.placeholder_text = "saved" if Sync.has_password() else ""
@@ -698,7 +708,12 @@ func _sync() -> void:
 		result.add_theme_color_override("font_color", UiTheme.MUTED)
 		var err: String = await Sync.test_connection()
 		result.text = "Connected." if err == "" else err
-		result.add_theme_color_override("font_color", UiTheme.GOOD if err == "" else UiTheme.BAD))
+		result.add_theme_color_override("font_color", UiTheme.GOOD if err == "" else UiTheme.BAD)
+	var save := UI.button("Save and test", "check", "", func():
+		if url.text.strip_edges().to_lower().begins_with("http://"):
+			_confirm_insecure_sync(url.text.strip_edges(), apply)
+		else:
+			apply.call())
 	save.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var on := CheckButton.new()
 	on.button_pressed = Sync.is_enabled()
