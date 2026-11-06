@@ -73,6 +73,7 @@ static class Setup
             AutoScaleMode = AutoScaleMode.Dpi,
             Font = SystemFonts.MessageBoxFont,
             ClientSize = new Size(520, 130),
+            Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath),
         };
         var label = new Label { Text = "Install " + AppName + " to this folder:", Location = new Point(12, 14), AutoSize = true };
         var path = new TextBox { Text = defaultDir, Location = new Point(12, 38), Width = 400 };

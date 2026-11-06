@@ -196,7 +196,7 @@ build_installer() {
 	[ -f "$csc" ] || die "C# compiler (csc.exe) not found. It ships with .NET Framework 4."
 	fw="$(cygpath -w "$(dirname "$csc")")"
 	rm -f "$setup"
-	"$csc" -nologo -target:winexe -optimize+ "-out:$(cygpath -w "$setup")" \
+	"$csc" -nologo -target:winexe -optimize+ "-win32icon:$(cygpath -w assets/icons/icon.ico)" "-out:$(cygpath -w "$setup")" \
 		"-resource:$(cygpath -w "$zip"),payload.zip" \
 		"-reference:$fw\\System.IO.Compression.dll" "-reference:$fw\\System.IO.Compression.FileSystem.dll" \
 		-reference:System.Windows.Forms.dll "$(cygpath -w installer/Setup.cs)" || die "compiling the installer failed"
