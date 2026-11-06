@@ -528,22 +528,23 @@ func _on_topbar_moved() -> void:
 		_rebuild_topbar.call_deferred()
 
 
-## Puts the top bar's first row at the very top of the screen, split around the
-## camera hole, or below the hole when its buttons don't fit on either side.
-func _place_top_row(row: HBoxContainer) -> void:
+## Puts the top bar's first row at the very top of the screen, with its buttons
+## split around the camera hole, or below the hole when they don't fit beside it.
+## The title then gets its own full-width line under the buttons.
+func _place_top_row(row: HBoxContainer, title: Control) -> void:
 	var style := _topbar.get_theme_stylebox("panel") as StyleBoxFlat
 	var holes := _top_holes()
 	var depth := 0.0
 	for h in holes:
 		depth = maxf(depth, h.end.y)
 	# Only when the hole is all that's up there: a visible status bar can't be dodged.
-	if holes.is_empty() or _insets.y > depth + 1 or not _split_row(row, holes, style):
+	if holes.is_empty() or _insets.y > depth + 1 or not _split_row(row, title, holes, style):
 		style.content_margin_top = _insets.y
 	else:
 		style.content_margin_top = maxf(0.0, depth - TOP_ROW_HEIGHT)
 
 
-func _split_row(row: HBoxContainer, holes: Array[Rect2], style: StyleBoxFlat) -> bool:
+func _split_row(row: HBoxContainer, title: Control, holes: Array[Rect2], style: StyleBoxFlat) -> bool:
 	_bar_span = Vector2(_topbar.global_position.x, _topbar.size.x)
 	var row_x := _bar_span.x + style.content_margin_left
 	var row_w := _bar_span.y - style.content_margin_left - style.content_margin_right
@@ -559,32 +560,20 @@ func _split_row(row: HBoxContainer, holes: Array[Rect2], style: StyleBoxFlat) ->
 	x0 = maxf(x0, 0.0)
 	x1 = minf(x1, row_w)
 
-	var items := row.get_children()
+	var items: Array = row.get_children()
 	var sep := float(row.get_theme_constant("separation"))
-	var widths: Array[float] = []
-	for c: Control in items:
-		var w := c.get_combined_minimum_size().x
-		if c.size_flags_horizontal & Control.SIZE_EXPAND:
-			w = maxf(w, 48.0)  # the title has to show at least a few letters
-		widths.append(w)
-	# Try each place in the row for the hole; keep the one that leaves the title the most room.
-	var best := -1
-	var best_room := -INF
-	for k in items.size() + 1:
-		var left := _span(widths.slice(0, k), sep)
-		var right := _span(widths.slice(k), sep)
-		if left > x0 or right > row_w - x1:
-			continue
-		var room := INF
-		for i in items.size():
-			if (items[i] as Control).size_flags_horizontal & Control.SIZE_EXPAND:
-				room = (x0 - left) if i < k else (row_w - x1 - right)
-				break
-		if room > best_room:
-			best = k
-			best_room = room
+	# Only buttons go up beside the hole; the title would get cut off there.
+	# Empty space takes its place, so the buttons keep to the ends of the row.
+	var slot := items.find(title)
+	if slot >= 0:
+		items[slot] = UI.spacer()
+	var best := _hole_slot(items, sep, x0, row_w - x1, maxi(slot, 0))
 	if best < 0:
+		if slot >= 0:
+			items[slot].free()
 		return false
+	if title:
+		_title_below(row, title)
 
 	var left_box := UI.hbox(int(sep))
 	left_box.custom_minimum_size.x = x0
@@ -594,7 +583,8 @@ func _split_row(row: HBoxContainer, holes: Array[Rect2], style: StyleBoxFlat) ->
 	var right_fills := false
 	for i in items.size():
 		var c: Control = items[i]
-		row.remove_child(c)
+		if c.get_parent() == row:
+			row.remove_child(c)
 		var fills := (c.size_flags_horizontal & Control.SIZE_EXPAND) != 0
 		if i < best:
 			left_box.add_child(c)
@@ -615,6 +605,33 @@ func _split_row(row: HBoxContainer, holes: Array[Rect2], style: StyleBoxFlat) ->
 	for c in [left_box, gap, right_box]:
 		row.add_child(c)
 	return true
+
+
+## Where in `items` the hole can go so everything before it fits in `left`
+## and everything after in `right`, or -1. Picks the place nearest `near`.
+func _hole_slot(items: Array, sep: float, left: float, right: float, near: int) -> int:
+	var widths: Array[float] = []
+	for c: Control in items:
+		widths.append(c.get_combined_minimum_size().x)
+	var best := -1
+	for k in items.size() + 1:
+		if _span(widths.slice(0, k), sep) > left or _span(widths.slice(k), sep) > right:
+			continue
+		if best < 0 or absi(k - near) < absi(best - near):
+			best = k
+	return best
+
+
+## Gives the title its own full-width line under the button row.
+func _title_below(row: HBoxContainer, title: Control) -> void:
+	row.remove_child(title)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.size_flags_stretch_ratio = 1.0
+	if title is Label:
+		title.custom_minimum_size.x = 0
+	var line := UI.margin(title, 8, 0, 8, 4)
+	_top_rows.add_child(line)
+	_top_rows.move_child(line, row.get_index() + 1)
 
 
 static func _span(widths: Array, sep: float) -> float:
@@ -681,10 +698,12 @@ func _rebuild_topbar() -> void:
 		back.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		row.add_child(back)
 	var title_fills := false
+	var title_ctl: Control
 	var custom_title := current.title_control()
 	if custom_title:
 		custom_title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		row.add_child(custom_title)
+		title_ctl = custom_title
 	else:
 		var title := UI.label(current.page_title(), "H2")
 		title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -702,6 +721,7 @@ func _rebuild_topbar() -> void:
 			title.size_flags_stretch_ratio = 0.5
 			title.clip_text = true
 		row.add_child(title)
+		title_ctl = title
 
 	var tabs_row := UI.hbox(22)
 	var group := ButtonGroup.new()
@@ -745,7 +765,7 @@ func _rebuild_topbar() -> void:
 			for b in tabs_row.get_children():
 				b.add_theme_stylebox_override("normal", UiTheme.box(Color.TRANSPARENT, 0, Color.TRANSPARENT, 0, Vector4(2, 10, 2, 10)))
 			_top_rows.add_child(sc)
-		_place_top_row(row)
+		_place_top_row(row, title_ctl)
 	else:
 		if names.size() > 0:
 			var sep := ColorRect.new()
@@ -757,7 +777,7 @@ func _rebuild_topbar() -> void:
 		row.add_child(UI.spacer())
 		row.add_child(actions)
 		_top_rows.add_child(row)
-		_place_top_row(row)
+		_place_top_row(row, title_ctl)
 	_refresh_listening()
 
 
