@@ -64,7 +64,7 @@ The export is a Gradle build so that `addons/android_speech` can add to it:
 
 The script installs Godot's Android build template into `android/` (git-ignored) on the first run and again when Godot's version changes. The first build downloads Gradle and its dependencies, so it needs internet and takes a few minutes.
 
-Release builds (from 0.2.0 on) are signed with the release keystore `bibliotheca-viva-release.keystore` (alias `bibliotheca-viva`). It lives outside the repo, in `~/.android/` on each machine that builds releases. Every release must be signed with this same key, because Android only installs an update signed with the key the installed app has. Keep a backup of the file and its password: if either is lost, the app can never be updated again, only uninstalled and installed fresh. Don't share them, because anyone with both can build updates that install over the app. Copy the keystore to another build machine instead of making a new one.
+Release builds (from 0.2.0 on) are signed with the release keystore `bibliotheca-viva-release.keystore` (alias `bibliotheca-viva`). It lives outside the repo, in `~/.android/` on each machine that builds releases. Every release must be signed with this same key, because Android only installs an update signed with the key the installed app has.
 
 ```sh
 export GODOT_ANDROID_KEYSTORE_RELEASE_PATH=~/.android/bibliotheca-viva-release.keystore
@@ -80,8 +80,6 @@ keytool -genkeypair -keystore ~/.android/bibliotheca-viva-release.keystore -stor
 ```
 
 Its certificate's SHA-256 fingerprint is `26:29:3F:68:EB:16:00:51:9F:F2:37:50:75:4F:19:82:04:DF:A3:30:9D:95:71:0B:AD:7B:0F:5E:C6:9E:5C:14`. `apksigner verify --print-certs <apk>` (in the SDK's build-tools) shows it for a built APK.
-
-An app installed from a debug build (or from release 0.1.0) can't be updated with a release build. Uninstall it first, which deletes its library and settings, so sync before uninstalling and sync again after installing the new build. Debug keys are made separately on each machine, so the same applies between debug builds from different machines.
 
 Raise `version/code` in the preset for every release you install over an older one. The version name comes from `config/version`.
 
