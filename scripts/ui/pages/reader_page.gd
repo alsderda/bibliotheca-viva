@@ -694,7 +694,10 @@ func _update_footer() -> void:
 
 
 func _update_player() -> void:
-	_player.visible = Speech.playing and Speech.source_owner == "reader"
+	var shown := Speech.playing and Speech.source_owner == "reader"
+	if _player.visible != shown:
+		_player.visible = shown
+		_apply_layout()  # the text only leaves room at the bottom while the player shows
 	_play_btn.icon = Icons.get_icon("play" if Speech.paused else "pause", Color("#06121f"), 22)
 	_player_label.text = "%s  ·  paragraph %d of %d" % [Speech.voice_name(), Speech.current + 1, max(1, _items.size())]
 	var sleeping := Speech.sleep_minutes != 0
@@ -1407,7 +1410,8 @@ func _apply_layout() -> void:
 	style.content_margin_left = side
 	style.content_margin_right = side
 	style.content_margin_top = 36 if not compact else 20
-	style.content_margin_bottom = 120
+	# Keep the last lines clear of the floating TTS player; without it, use the space for text.
+	style.content_margin_bottom = 120 if _player.visible else style.content_margin_top
 	_text.add_theme_stylebox_override("normal", style)
 	_text.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	_player.custom_minimum_size.x = 0 if compact else 520
