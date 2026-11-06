@@ -1,7 +1,8 @@
 # Notes for Claude
 
 - **Finish with a PR:** when a task changes files, commit to a branch, push, and open a PR against `main` without
-  being asked.
+  being asked. Then wait for the PR's CI checks to finish and look at what they report. If a check fails, fix it and
+  push again before handing back.
 - **Bump the version in every PR:** raise the patch number of `config/version` in `project.godot` by 1, and the
   version code by 10 in both `config/version_code` (`project.godot`) and `version/code` (`export_presets.cfg`), unless
   there's a reason not to (say why in the PR). See "Versions" in docs/DEVELOPMENT.md.
