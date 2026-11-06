@@ -97,8 +97,10 @@ Runs two profiles as two devices against the server: first sync, changes on each
 ### Self-test
 
 ```sh
-godot --path . -- --profile=selftest --selftest   # text rules, sentence splitting, TTS pause timing, plugin helpers, and every loaded plugin's own checks
+godot --path . -- --profile=selftest --selftest   # every script compiles, text rules, sentence splitting, TTS pause timing, plugin helpers, and every loaded plugin's own checks
 ```
+
+A GitHub check (`.github/workflows/tests.yml`) runs it headless on Linux for every PR and push to `main`. There's no TTS there, so the pacing checks are skipped, and `plugins/` isn't in the repo, so no plugin checks run.
 
 ### Plugin test
 

@@ -1,0 +1,51 @@
+# Runs the self-test (every script compiles, text rules, sentence splitting, network queue, ...) on Linux.
+# TTS pacing is skipped there, since the runner has no voices.
+name: Tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  GODOT_VERSION: 4.7.2
+
+jobs:
+  selftest:
+    name: Self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Godot
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/godot
+          key: godot-${{ env.GODOT_VERSION }}
+
+      - name: Download Godot
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/godot && cd ~/godot
+          curl -fsSL -o godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          unzip -q godot.zip && rm godot.zip
+          mv Godot_v*_linux.x86_64 godot
+
+      # Builds the .godot cache (class names, imported assets) a fresh checkout doesn't have.
+      # Script errors here are left to the self-test, which names the broken files.
+      - name: Import project
+        run: timeout 300 ~/godot/godot --headless --path . --import
+
+      # Godot hangs instead of exiting when a script fails to compile, so the run has a time limit,
+      # and it only passes if the self-test printed its result.
+      - name: Run self-test
+        run: |
+          set -o pipefail
+          timeout 600 ~/godot/godot --headless --path . -- --profile=selftest --selftest 2>&1 | tee selftest.log
+          grep -q "^SELFTEST PASSED" selftest.log
