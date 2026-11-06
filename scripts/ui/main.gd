@@ -20,6 +20,7 @@ var _laid_out := false
 var _nav_buttons := {}
 var _nav_group := ButtonGroup.new()
 var _continue_box: Control
+var _continue_key := ""  # book id and chapter the Continue card shows
 var _listening_box: Control
 var _bridge_row: VBoxContainer
 var _topbar: PanelContainer
@@ -109,6 +110,8 @@ func _ready() -> void:
 		pages[key] = page
 
 	Library.changed.connect(_refresh_continue)
+	# Reading doesn't emit `changed`, so also redraw when the card would show another book or chapter.
+	Library.progress_changed.connect(_on_progress_changed)
 	Plugins.status_changed.connect(_refresh_bridge)
 	Plugins.changed.connect(_refresh_bridge)
 	Plugins.message.connect(toast)
@@ -311,9 +314,19 @@ func _add_nav(col: VBoxContainer, key: String, text: String, icon: String) -> vo
 	col.add_child(b)
 
 
+func _on_progress_changed(_id: String) -> void:
+	if _continue_key_of(Library.last_read()) != _continue_key:
+		_refresh_continue()
+
+
+func _continue_key_of(book: Dictionary) -> String:
+	return "" if book.is_empty() else "%s:%d" % [book.id, book.progress.chapter]
+
+
 func _refresh_continue() -> void:
 	UI.clear(_continue_box)
 	var book := Library.last_read()
+	_continue_key = _continue_key_of(book)
 	if book.is_empty():
 		return
 	var card := Button.new()
