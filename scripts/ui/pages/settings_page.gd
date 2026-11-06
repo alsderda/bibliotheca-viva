@@ -245,7 +245,7 @@ func _style_preview(prev: PanelContainer, rt: RichTextLabel) -> void:
 	rt.add_theme_color_override("default_color", c.text)
 	rt.add_theme_constant_override("line_separation", int(Settings.get_value("line_spacing")) + int(size * 0.2))
 	rt.add_theme_constant_override("paragraph_separation", int(Settings.get_value("paragraph_gap")))
-	rt.horizontal_alignment = ReaderPage.text_alignment()
+	ReaderPage.apply_alignment(rt)
 	var indent := ReaderPage.indent_bbcode(size) if Settings.get_value("first_line_indent") else ""
 	rt.text = indent + "It was on a dreary night of November that I beheld the accomplishment of my toils. With an anxiety that almost amounted to [i]agony[/i], I collected the instruments of life around me.\n" + indent + "It was already one in the morning; the rain pattered dismally against the panes, and my candle was nearly burnt out."
 
