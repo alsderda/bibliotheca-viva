@@ -26,6 +26,16 @@ var _topbar: PanelContainer
 var _top_rows: VBoxContainer
 var _host: Control
 var _toast_box: VBoxContainer
+var _sidebar_style: StyleBoxFlat
+
+## Screen edges covered by the camera hole or system bars, in UI units (x left,
+## y top, z right, w bottom). The background still runs under them; controls stay out.
+var _insets := Vector4.ZERO
+var _cutouts: Array[Rect2] = []  # camera holes, in UI units
+var _bar_span := Vector2(-1, -1)  # top bar x and width the camera-hole fit was made for
+
+const TOP_ROW_HEIGHT := 60.0
+const HOLE_PAD := 8.0  # space kept between the camera hole and the buttons beside it
 
 
 func _ready() -> void:
@@ -42,6 +52,8 @@ func _ready() -> void:
 	add_child(_root)
 	_sidebar = _build_sidebar()
 	_root.add_child(_sidebar)
+	_sidebar_style = (_sidebar.get_theme_stylebox("panel") as StyleBoxFlat).duplicate()
+	_sidebar.add_theme_stylebox_override("panel", _sidebar_style)
 	_sidebar_sep = ColorRect.new()
 	_sidebar_sep.color = UiTheme.BORDER
 	_sidebar_sep.custom_minimum_size.x = 1
@@ -54,6 +66,7 @@ func _ready() -> void:
 	_top_rows = UI.vbox(0)
 	_topbar.add_child(_top_rows)
 	right.add_child(_topbar)
+	_topbar.item_rect_changed.connect(_on_topbar_moved)
 	_host = Control.new()
 	_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_host.clip_contents = true
@@ -75,7 +88,6 @@ func _ready() -> void:
 	_toast_box.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
 	_toast_box.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	_toast_box.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	_toast_box.position -= Vector2(24, 24)
 	_toast_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_toast_box)
 
@@ -103,6 +115,15 @@ func _ready() -> void:
 	Speech.state_changed.connect(func(_p): _refresh_listening())
 	Speech.paragraph_started.connect(func(_i): _refresh_listening())
 	get_viewport().size_changed.connect(_on_resize)
+	if OS.has_feature("android"):
+		# The insets change without a resize when Android applies fullscreen
+		# after start-up, so check now and then too. It's a cheap call.
+		var t := Timer.new()
+		t.wait_time = 0.5
+		t.timeout.connect(_update_safe_area)
+		add_child(t)
+		t.start()
+	_update_safe_area(true)
 	_on_resize()
 	navigate("library")
 	_refresh_continue()
@@ -430,6 +451,7 @@ func _refresh_bridge() -> void:
 
 
 func _on_resize() -> void:
+	_update_safe_area()
 	var w := get_viewport_rect().size.x
 	var c := w < COMPACT_WIDTH
 	if _drawer.visible:
@@ -452,6 +474,173 @@ func _on_resize() -> void:
 	for p in pages.values():
 		p.set_compact(compact)
 	_rebuild_topbar()
+
+
+# --- safe area (Android camera hole and system bars) -------------------------
+
+func _update_safe_area(force := false) -> void:
+	var insets := Vector4.ZERO
+	var cutouts: Array[Rect2] = []
+	var s := get_window().content_scale_factor
+	# On desktops the "safe area" is the screen minus the taskbar, not the window's.
+	if OS.has_feature("android"):
+		var win := Vector2(DisplayServer.window_get_size())
+		var safe := Rect2(DisplayServer.get_display_safe_area())
+		insets = Vector4(safe.position.x, safe.position.y, win.x - safe.end.x, win.y - safe.end.y) / s
+		for r in DisplayServer.get_display_cutouts():
+			cutouts.append(Rect2(r.position / s, r.size / s))
+	# Desktop testing: --fake-cutout=x,y,w,h (UI units) acts like a camera hole there.
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--fake-cutout="):
+			var v := arg.get_slice("=", 1).split_floats(",")
+			if v.size() == 4:
+				cutouts = [Rect2(v[0], v[1], v[2], v[3])]
+				insets.y = maxf(insets.y, v[1] + v[3])
+	insets = insets.max(Vector4.ZERO)
+	if not force and insets.is_equal_approx(_insets) and cutouts == _cutouts:
+		return
+	_insets = insets
+	_cutouts = cutouts
+	_root.offset_left = insets.x
+	_root.offset_right = -insets.z
+	_root.offset_bottom = -insets.w
+	_sidebar_style.content_margin_top = 16 + insets.y
+	_toast_box.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	_toast_box.position -= Vector2(24 + insets.z, 24 + insets.w)
+	_bar_span = Vector2(-1, -1)
+	if not force:
+		_rebuild_topbar()
+
+
+## Camera holes at the top edge of the screen.
+func _top_holes() -> Array[Rect2]:
+	var holes: Array[Rect2] = []
+	for c in _cutouts:
+		if c.position.y <= 4 and c.size.y > 0:
+			holes.append(c)
+	return holes
+
+
+func _on_topbar_moved() -> void:
+	if _top_holes().is_empty():
+		return
+	if Vector2(_topbar.global_position.x, _topbar.size.x) != _bar_span:
+		_rebuild_topbar.call_deferred()
+
+
+## Puts the top bar's first row at the very top of the screen, with its buttons
+## split around the camera hole, or below the hole when they don't fit beside it.
+## The title then gets its own full-width line under the buttons.
+func _place_top_row(row: HBoxContainer, title: Control) -> void:
+	var style := _topbar.get_theme_stylebox("panel") as StyleBoxFlat
+	var holes := _top_holes()
+	var depth := 0.0
+	for h in holes:
+		depth = maxf(depth, h.end.y)
+	# Only when the hole is all that's up there: a visible status bar can't be dodged.
+	if holes.is_empty() or _insets.y > depth + 1 or not _split_row(row, title, holes, style):
+		style.content_margin_top = _insets.y
+	else:
+		style.content_margin_top = maxf(0.0, depth - TOP_ROW_HEIGHT)
+
+
+func _split_row(row: HBoxContainer, title: Control, holes: Array[Rect2], style: StyleBoxFlat) -> bool:
+	_bar_span = Vector2(_topbar.global_position.x, _topbar.size.x)
+	var row_x := _bar_span.x + style.content_margin_left
+	var row_w := _bar_span.y - style.content_margin_left - style.content_margin_right
+	if row_w <= 0:
+		return false  # not laid out yet; _on_topbar_moved comes back once it is
+	var x0 := INF
+	var x1 := -INF
+	for h in holes:
+		x0 = minf(x0, h.position.x - row_x - HOLE_PAD)
+		x1 = maxf(x1, h.end.x - row_x + HOLE_PAD)
+	if x1 <= 0 or x0 >= row_w:
+		return true  # the hole is beside the row, not over it
+	x0 = maxf(x0, 0.0)
+	x1 = minf(x1, row_w)
+
+	var items: Array = row.get_children()
+	var sep := float(row.get_theme_constant("separation"))
+	# Only buttons go up beside the hole; the title would get cut off there.
+	# Empty space takes its place, so the buttons keep to the ends of the row.
+	var slot := items.find(title)
+	if slot >= 0:
+		items[slot] = UI.spacer()
+	var best := _hole_slot(items, sep, x0, row_w - x1, maxi(slot, 0))
+	if best < 0:
+		if slot >= 0:
+			items[slot].free()
+		return false
+	if title:
+		_title_below(row, title)
+
+	var left_box := UI.hbox(int(sep))
+	left_box.custom_minimum_size.x = x0
+	var right_box := UI.hbox(int(sep))
+	right_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var left_fills := false
+	var right_fills := false
+	for i in items.size():
+		var c: Control = items[i]
+		if c.get_parent() == row:
+			row.remove_child(c)
+		var fills := (c.size_flags_horizontal & Control.SIZE_EXPAND) != 0
+		if i < best:
+			left_box.add_child(c)
+			left_fills = left_fills or fills
+		else:
+			right_box.add_child(c)
+			right_fills = right_fills or fills
+	if not left_fills:
+		left_box.add_child(UI.spacer())
+	if not right_fills:
+		var sp := UI.spacer()
+		right_box.add_child(sp)
+		right_box.move_child(sp, 0)  # keeps the actions at the right edge
+	var gap := Control.new()
+	gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	gap.custom_minimum_size.x = x1 - x0
+	row.add_theme_constant_override("separation", 0)
+	for c in [left_box, gap, right_box]:
+		row.add_child(c)
+	return true
+
+
+## Where in `items` the hole can go so everything before it fits in `left`
+## and everything after in `right`, or -1. Picks the place nearest `near`.
+func _hole_slot(items: Array, sep: float, left: float, right: float, near: int) -> int:
+	var widths: Array[float] = []
+	for c: Control in items:
+		widths.append(c.get_combined_minimum_size().x)
+	var best := -1
+	for k in items.size() + 1:
+		if _span(widths.slice(0, k), sep) > left or _span(widths.slice(k), sep) > right:
+			continue
+		if best < 0 or absi(k - near) < absi(best - near):
+			best = k
+	return best
+
+
+## Gives the title its own full-width line under the button row.
+func _title_below(row: HBoxContainer, title: Control) -> void:
+	row.remove_child(title)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.size_flags_stretch_ratio = 1.0
+	if title is Label:
+		title.custom_minimum_size.x = 0
+	var line := UI.margin(title, 8, 0, 8, 4)
+	_top_rows.add_child(line)
+	_top_rows.move_child(line, row.get_index() + 1)
+
+
+static func _span(widths: Array, sep: float) -> float:
+	if widths.is_empty():
+		return 0.0
+	var total := sep * (widths.size() - 1)
+	for w in widths:
+		total += w
+	return total
 
 
 # --- drawer (compact layout) -------------------------------------------------
@@ -498,7 +687,7 @@ func _rebuild_topbar() -> void:
 	UI.clear(_top_rows)
 	_top_listen = null
 	var row := UI.hbox(14)
-	row.custom_minimum_size.y = 60
+	row.custom_minimum_size.y = TOP_ROW_HEIGHT
 	if compact:
 		var menu := UI.icon_button("menu", "Menu", open_drawer, 22)
 		menu.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -509,10 +698,12 @@ func _rebuild_topbar() -> void:
 		back.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		row.add_child(back)
 	var title_fills := false
+	var title_ctl: Control
 	var custom_title := current.title_control()
 	if custom_title:
 		custom_title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		row.add_child(custom_title)
+		title_ctl = custom_title
 	else:
 		var title := UI.label(current.page_title(), "H2")
 		title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -530,6 +721,7 @@ func _rebuild_topbar() -> void:
 			title.size_flags_stretch_ratio = 0.5
 			title.clip_text = true
 		row.add_child(title)
+		title_ctl = title
 
 	var tabs_row := UI.hbox(22)
 	var group := ButtonGroup.new()
@@ -573,6 +765,7 @@ func _rebuild_topbar() -> void:
 			for b in tabs_row.get_children():
 				b.add_theme_stylebox_override("normal", UiTheme.box(Color.TRANSPARENT, 0, Color.TRANSPARENT, 0, Vector4(2, 10, 2, 10)))
 			_top_rows.add_child(sc)
+		_place_top_row(row, title_ctl)
 	else:
 		if names.size() > 0:
 			var sep := ColorRect.new()
@@ -584,6 +777,7 @@ func _rebuild_topbar() -> void:
 		row.add_child(UI.spacer())
 		row.add_child(actions)
 		_top_rows.add_child(row)
+		_place_top_row(row, title_ctl)
 	_refresh_listening()
 
 
@@ -609,6 +803,8 @@ func _notification(what: int) -> void:
 		get_tree().root.propagate_notification(NOTIFICATION_WM_CLOSE_REQUEST)
 		if get_tree().auto_accept_quit:
 			get_tree().quit()
+	elif what == NOTIFICATION_APPLICATION_RESUMED:
+		_update_safe_area()
 	elif what == NOTIFICATION_WM_CLOSE_REQUEST:
 		Speech.stop()
 		Plugins.shutdown_all()
