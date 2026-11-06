@@ -29,6 +29,7 @@ var _player: PanelContainer
 var _play_btn: Button
 var _player_label: Label
 var _player_info: Control
+var _player_row: HBoxContainer
 var _rate_btn: Button
 var _contents_view: Control
 var _contents_list: VBoxContainer
@@ -748,11 +749,13 @@ func _build_read_view() -> void:
 	_player = UI.panel("PlayerBar")
 	_player.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	var prow := UI.hbox(8)
+	_player_row = prow
 	prow.add_child(UI.icon_button("skip_back", "Back a sentence / paragraph", func(): Speech.skip_sentence(-1)))
 	_play_btn = Button.new()
 	_play_btn.theme_type_variation = "PrimaryButton"
 	_play_btn.focus_mode = Control.FOCUS_NONE
 	_play_btn.custom_minimum_size = Vector2(44, 44)
+	_play_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER  # stay round if the row gets taller
 	_play_btn.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_play_btn.add_theme_stylebox_override("normal", UiTheme.box(UiTheme.ACCENT, 22))
 	_play_btn.add_theme_stylebox_override("hover", UiTheme.box(UiTheme.ACCENT.lightened(0.1), 22))
@@ -1423,6 +1426,18 @@ func _apply_layout() -> void:
 	_text.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	_player.custom_minimum_size.x = 0 if compact else 520
 	_player_info.visible = not compact
+	# On a phone the bar has no room to spare: a countdown beside the moon pushes the
+	# stop button off screen, so put it under the moon in small type instead.
+	_player_row.add_theme_constant_override("separation", 4 if compact else 8)
+	_sleep_btn.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP if compact else VERTICAL_ALIGNMENT_CENTER
+	_sleep_btn.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER if compact else HORIZONTAL_ALIGNMENT_LEFT
+	_sleep_btn.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if compact:
+		_sleep_btn.add_theme_font_size_override("font_size", 11)
+		_sleep_btn.add_theme_constant_override("h_separation", 0)
+	else:
+		_sleep_btn.remove_theme_font_size_override("font_size")
+		_sleep_btn.remove_theme_constant_override("h_separation")
 
 
 # --- quick voice settings (player bar) ---------------------------------------
