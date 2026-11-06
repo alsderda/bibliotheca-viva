@@ -562,18 +562,31 @@ func _split_row(row: HBoxContainer, title: Control, holes: Array[Rect2], style: 
 
 	var items: Array = row.get_children()
 	var sep := float(row.get_theme_constant("separation"))
-	# Only buttons go up beside the hole; the title would get cut off there.
-	# Empty space takes its place, so the buttons keep to the ends of the row.
 	var slot := items.find(title)
+	# The title stays in the row when all of it fits beside the hole.
+	var best := -1
 	if slot >= 0:
-		items[slot] = UI.spacer()
-	var best := _hole_slot(items, sep, x0, row_w - x1, maxi(slot, 0))
+		var full := _full_width(title)
+		var old_min: float = title.custom_minimum_size.x
+		title.custom_minimum_size.x = full
+		best = _hole_slot(items, sep, x0, row_w - x1, slot + 1)
+		title.custom_minimum_size.x = old_min
+		if best > slot:  # title on the menu button's side of the hole
+			title.custom_minimum_size.x = full
+		else:
+			best = -1
 	if best < 0:
+		# Otherwise only the buttons go up there and the title gets its own line.
+		# Empty space takes its place, so the buttons keep to the ends of the row.
 		if slot >= 0:
-			items[slot].free()
-		return false
-	if title:
-		_title_below(row, title)
+			items[slot] = UI.spacer()
+		best = _hole_slot(items, sep, x0, row_w - x1, maxi(slot, 0))
+		if best < 0:
+			if slot >= 0:
+				items[slot].free()
+			return false
+		if title:
+			_title_below(row, title)
 
 	var left_box := UI.hbox(int(sep))
 	left_box.custom_minimum_size.x = x0
@@ -620,6 +633,15 @@ func _hole_slot(items: Array, sep: float, left: float, right: float, near: int) 
 		if best < 0 or absi(k - near) < absi(best - near):
 			best = k
 	return best
+
+
+## How wide the title is with none of its text cut off.
+static func _full_width(title: Control) -> float:
+	if title is Label:
+		var font := title.get_theme_font("font")
+		var size := title.get_theme_font_size("font_size")
+		return ceilf(font.get_string_size(title.text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x)
+	return title.get_combined_minimum_size().x
 
 
 ## Gives the title its own full-width line under the button row.
