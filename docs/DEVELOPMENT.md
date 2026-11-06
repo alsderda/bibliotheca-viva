@@ -36,6 +36,10 @@ Versions follow Android's scheme: a version name people read and a version code 
 
 The Android build and the Windows file properties pick up the version name from `project.godot` (their own fields in the presets are left empty). Settings → About shows both.
 
+### App icon
+
+`assets/icon.svg` is the app icon (the same book logo as the sidebar). Godot uses it for the window and the editor; the exports need fixed-size files, which live in `assets/icons/`: `icon.ico` for the Windows exe, its window and the installer, and PNGs for the Android launcher (192 px icon, plus 432 px adaptive foreground and background layers drawn from `icon_foreground.svg` and `icon_background.svg`). After changing any of the SVGs, run `Godot --headless --path . --script installer/make_icons.gd` to render them again (errors about autoloads in its output are harmless).
+
 ### Windows installer
 
 `installer/build.sh installer` exports the app (preset "Windows Desktop" in `export_presets.cfg`), adds the licenses, and writes `export/bibliotheca-viva-Setup-<version>.exe`, a single-file installer. It asks for a folder, unpacks the app there, and overwrites older files, so you update by running a newer installer on the same folder. Library and settings live in the user data folder (`%APPDATA%\bibliotheca-viva`), so updating doesn't touch them. `Setup.exe "/dir=C:\some\folder"` installs without any window.
