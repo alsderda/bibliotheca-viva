@@ -29,6 +29,9 @@ var _player: PanelContainer
 var _play_btn: Button
 var _player_label: Label
 var _player_info: Control
+var _player_row: HBoxContainer
+var _player_dock: MarginContainer
+var _player_edge := false  # true while the player is a full-width strip (screen too thin to float it)
 var _rate_btn: Button
 var _contents_view: Control
 var _contents_list: VBoxContainer
@@ -705,6 +708,7 @@ func _update_player() -> void:
 	_sleep_btn.icon = Icons.get_icon("moon", UiTheme.ACCENT if sleeping else UiTheme.MUTED, 18)
 	_sleep_btn.tooltip_text = "Sleep timer: " + Speech.sleep_label()
 	_rate_btn.text = "%sx" % str(float(Settings.get_value("tts_rate"))).trim_suffix(".0")
+	_fit_player()  # the sleep and speed labels change the bar's width
 
 
 # --- view construction -------------------------------------------------------
@@ -748,11 +752,13 @@ func _build_read_view() -> void:
 	_player = UI.panel("PlayerBar")
 	_player.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	var prow := UI.hbox(8)
+	_player_row = prow
 	prow.add_child(UI.icon_button("skip_back", "Back a sentence / paragraph", func(): Speech.skip_sentence(-1)))
 	_play_btn = Button.new()
 	_play_btn.theme_type_variation = "PrimaryButton"
 	_play_btn.focus_mode = Control.FOCUS_NONE
 	_play_btn.custom_minimum_size = Vector2(44, 44)
+	_play_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER  # stay round if the row gets taller
 	_play_btn.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_play_btn.add_theme_stylebox_override("normal", UiTheme.box(UiTheme.ACCENT, 22))
 	_play_btn.add_theme_stylebox_override("hover", UiTheme.box(UiTheme.ACCENT.lightened(0.1), 22))
@@ -788,6 +794,7 @@ func _build_read_view() -> void:
 	dock_m.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dock_m.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	stack.add_child(dock_m)
+	_player_dock = dock_m
 
 	# Footer: chapter navigation and progress
 	_footer = PanelContainer.new()
@@ -1423,6 +1430,54 @@ func _apply_layout() -> void:
 	_text.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	_player.custom_minimum_size.x = 0 if compact else 520
 	_player_info.visible = not compact
+	# On a phone the bar has no room to spare: a countdown beside the moon pushes the
+	# stop button off screen, so put it under the moon in small type instead.
+	_sleep_btn.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP if compact else VERTICAL_ALIGNMENT_CENTER
+	_sleep_btn.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER if compact else HORIZONTAL_ALIGNMENT_LEFT
+	_sleep_btn.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if compact:
+		_sleep_btn.add_theme_font_size_override("font_size", 11)
+		_sleep_btn.add_theme_constant_override("h_separation", 0)
+	else:
+		_sleep_btn.remove_theme_font_size_override("font_size")
+		_sleep_btn.remove_theme_constant_override("h_separation")
+	_fit_player()
+
+
+## Very thin screens can't fit the floating bar with its side gaps and padding,
+## so it turns into a plain strip across the full width at the bottom.
+func _fit_player() -> void:
+	var gap := 4 if compact else 8
+	var cur := _player_row.get_theme_constant("separation")
+	var bare := 0.0  # the buttons alone, no gaps
+	var shown := 0
+	for c: Control in _player_row.get_children():
+		if c.visible:
+			bare += c.get_combined_minimum_size().x
+			shown += 1
+	var gaps := maxi(1, shown - 1)
+	var fb: StyleBox = _player.get_theme_stylebox("panel", "PlayerBar")
+	var need := bare + gap * gaps + fb.get_margin(SIDE_LEFT) + fb.get_margin(SIDE_RIGHT)
+	var edge := compact and need > _text.size.x - 24  # 12px gap on each side when floating
+	if edge:  # as much gap as fits, down to none
+		gap = clampi(int((_text.size.x - 8 - bare) / gaps), 0, gap)
+	if cur != gap:
+		_player_row.add_theme_constant_override("separation", gap)
+	if edge == _player_edge:
+		return
+	_player_edge = edge
+	for side in ["margin_left", "margin_right"]:
+		_player_dock.add_theme_constant_override(side, 0 if edge else 12)
+	_player_dock.add_theme_constant_override("margin_bottom", 0 if edge else 18)
+	_player.size_flags_horizontal = Control.SIZE_FILL if edge else Control.SIZE_SHRINK_CENTER
+	_player_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	if edge:
+		var strip := UiTheme.box(UiTheme.SURFACE, 0, Color.TRANSPARENT, 0, Vector4(4, 8, 4, 8))
+		strip.border_color = UiTheme.BORDER
+		strip.border_width_top = 1
+		_player.add_theme_stylebox_override("panel", strip)
+	else:
+		_player.remove_theme_stylebox_override("panel")
 
 
 # --- quick voice settings (player bar) ---------------------------------------
