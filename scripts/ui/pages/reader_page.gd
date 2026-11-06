@@ -1040,7 +1040,9 @@ func _build_details() -> void:
 		tb.tooltip_text = "Show the books tagged “%s”" % tag
 		chips.add_child(tb)
 	col.add_child(UI.margin(chips, 0, 4, 0, 8))
-	var stats := UI.hbox(28)
+	var stats := HFlowContainer.new()  # wraps on narrow (phone) screens
+	stats.add_theme_constant_override("h_separation", 28)
+	stats.add_theme_constant_override("v_separation", 14)
 	stats.add_child(_stat("Chapters", str(book.chapters.size())))
 	stats.add_child(_stat("Progress", "%d%%" % int(Library.progress_ratio(book) * 100)))
 	stats.add_child(_stat("Last read", UI.relative_time(book.last_read)))
