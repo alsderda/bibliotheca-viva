@@ -1,0 +1,4 @@
+# Store text files with LF and check them out with LF on every OS.
+# Godot always writes LF, so CRLF checkouts on Windows made thousands of
+# files look modified after opening the editor, with nothing to commit.
+* text=auto eol=lf

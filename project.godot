@@ -1,0 +1,68 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[application]
+
+config/name="Bibliothéca-viva"
+config/description="Ebook reader with text-to-speech, library sync over WebDAV, and a plugin system for fetching books from web serial sites."
+config/use_custom_user_dir=true
+config/custom_user_dir_name="bibliotheca-viva"
+config/version="0.1.0"
+config/version_code=10
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.7", "GL Compatibility")
+run/low_processor_mode=true
+boot_splash/bg_color=Color(0.05490196, 0.0627451, 0.078431375, 1)
+boot_splash/show_image=false
+config/icon="res://assets/icon.svg"
+
+[audio]
+
+general/text_to_speech=true
+
+[autoload]
+
+Settings="*res://scripts/core/settings.gd"
+Library="*res://scripts/core/library.gd"
+TextRules="*res://scripts/core/text_rules.gd"
+Net="*res://scripts/core/net.gd"
+Plugins="*res://scripts/sources/plugins.gd"
+Speech="*res://scripts/core/speech.gd"
+Sources="*res://scripts/sources/sources.gd"
+SavedSearches="*res://scripts/core/saved_searches.gd"
+Sync="*res://scripts/core/sync.gd"
+
+[debug]
+
+gdscript/warnings/inference_on_variant=1
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=800
+window/handheld/orientation=6
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/android_speech/plugin.cfg")
+
+[gui]
+
+common/drop_mouse_on_gui_input_disabled=true
+
+[input_devices]
+
+pointing/android/enable_pan_and_scale_gestures=true
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/vram_compression/import_etc2_astc=true

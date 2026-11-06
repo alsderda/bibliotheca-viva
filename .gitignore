@@ -1,0 +1,8 @@
+.godot/
+backend/.venv/
+backend/__pycache__/
+export/
+android/
+/screenshots/
+plugins/
+installer/godot_path.local
