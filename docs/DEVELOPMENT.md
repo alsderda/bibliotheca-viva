@@ -44,7 +44,7 @@ The Android build and the Windows file properties pick up the version name from 
 
 `installer/build.sh installer` exports the app (preset "Windows Desktop" in `export_presets.cfg`), adds the licenses, and writes `export/bibliotheca-viva-Setup-<version>.exe`, a single-file installer. It asks for a folder, unpacks the app there, and overwrites older files, so you update by running a newer installer on the same folder. Library and settings live in the user data folder (`%APPDATA%\bibliotheca-viva`), so updating doesn't touch them. `Setup.exe "/dir=C:\some\folder"` installs without any window.
 
-The installer is compiled from `installer/Setup.cs` with the C# compiler that comes with Windows, so it can only be built on Windows, but nothing else is needed.
+The installer is compiled from `installer/Setup.cs`. On Windows the script uses the C# compiler that comes with Windows, so nothing else is needed. On macOS or Linux it uses Mono's `mcs` instead (`brew install mono`), which builds the same .NET Framework 4.5 program. Building the EXE on a Mac needs Godot's Windows export templates.
 
 ### Android
 
@@ -64,15 +64,24 @@ The export is a Gradle build so that `addons/android_speech` can add to it:
 
 The script installs Godot's Android build template into `android/` (git-ignored) on the first run and again when Godot's version changes. The first build downloads Gradle and its dependencies, so it needs internet and takes a few minutes.
 
-For a release build, create a keystore once and keep it outside the repo (losing it means you can't update the installed app):
+Release builds (from 0.2.0 on) are signed with the release keystore `bibliotheca-viva-release.keystore` (alias `bibliotheca-viva`). It lives outside the repo, in `~/.android/` on each machine that builds releases. Every release must be signed with this same key, because Android only installs an update signed with the key the installed app has. Keep a backup of the file and its password: if either is lost, the app can never be updated again, only uninstalled and installed fresh. Don't share them, because anyone with both can build updates that install over the app. Copy the keystore to another build machine instead of making a new one.
 
 ```sh
-keytool -genkeypair -keystore ~/.android/bibliotheca-viva-release.keystore -alias bibliotheca-viva -keyalg RSA -keysize 2048 -validity 10000
 export GODOT_ANDROID_KEYSTORE_RELEASE_PATH=~/.android/bibliotheca-viva-release.keystore
 export GODOT_ANDROID_KEYSTORE_RELEASE_USER=bibliotheca-viva
-export GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD=...
+export GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD='...'  # single quotes, so symbols in it aren't changed by the shell
 installer/build.sh apk --release  # export/android/bibliotheca-viva-<version>.apk
 ```
+
+The key was created once with:
+
+```sh
+keytool -genkeypair -keystore ~/.android/bibliotheca-viva-release.keystore -storetype PKCS12 -alias bibliotheca-viva -keyalg RSA -keysize 4096 -validity 10000 -dname "CN=bibliotheca-viva"
+```
+
+Its certificate's SHA-256 fingerprint is `26:29:3F:68:EB:16:00:51:9F:F2:37:50:75:4F:19:82:04:DF:A3:30:9D:95:71:0B:AD:7B:0F:5E:C6:9E:5C:14`. `apksigner verify --print-certs <apk>` (in the SDK's build-tools) shows it for a built APK.
+
+An app installed from a debug build (or from release 0.1.0) can't be updated with a release build. Uninstall it first, which deletes its library and settings, so sync before uninstalling and sync again after installing the new build. Debug keys are made separately on each machine, so the same applies between debug builds from different machines.
 
 Raise `version/code` in the preset for every release you install over an older one. The version name comes from `config/version`.
 
