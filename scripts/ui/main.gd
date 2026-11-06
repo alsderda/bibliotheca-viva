@@ -530,21 +530,22 @@ func _on_topbar_moved() -> void:
 
 ## Puts the top bar's first row at the very top of the screen, with its buttons
 ## split around the camera hole, or below the hole when they don't fit beside it.
-## The title then gets its own full-width line under the buttons.
-func _place_top_row(row: HBoxContainer, title: Control) -> void:
+## The title then gets its own full-width line under the buttons, unless
+## `title_up` and all of it fits beside the hole.
+func _place_top_row(row: HBoxContainer, title: Control, title_up := false) -> void:
 	var style := _topbar.get_theme_stylebox("panel") as StyleBoxFlat
 	var holes := _top_holes()
 	var depth := 0.0
 	for h in holes:
 		depth = maxf(depth, h.end.y)
 	# Only when the hole is all that's up there: a visible status bar can't be dodged.
-	if holes.is_empty() or _insets.y > depth + 1 or not _split_row(row, title, holes, style):
+	if holes.is_empty() or _insets.y > depth + 1 or not _split_row(row, title, holes, style, title_up):
 		style.content_margin_top = _insets.y
 	else:
 		style.content_margin_top = maxf(0.0, depth - TOP_ROW_HEIGHT)
 
 
-func _split_row(row: HBoxContainer, title: Control, holes: Array[Rect2], style: StyleBoxFlat) -> bool:
+func _split_row(row: HBoxContainer, title: Control, holes: Array[Rect2], style: StyleBoxFlat, title_up: bool) -> bool:
 	_bar_span = Vector2(_topbar.global_position.x, _topbar.size.x)
 	var row_x := _bar_span.x + style.content_margin_left
 	var row_w := _bar_span.y - style.content_margin_left - style.content_margin_right
@@ -562,18 +563,31 @@ func _split_row(row: HBoxContainer, title: Control, holes: Array[Rect2], style: 
 
 	var items: Array = row.get_children()
 	var sep := float(row.get_theme_constant("separation"))
-	# Only buttons go up beside the hole; the title would get cut off there.
-	# Empty space takes its place, so the buttons keep to the ends of the row.
 	var slot := items.find(title)
-	if slot >= 0:
-		items[slot] = UI.spacer()
-	var best := _hole_slot(items, sep, x0, row_w - x1, maxi(slot, 0))
+	# The title may stay in the row when all of it fits beside the hole.
+	var best := -1
+	if slot >= 0 and title_up:
+		var full := _full_width(title)
+		var old_min: float = title.custom_minimum_size.x
+		title.custom_minimum_size.x = full
+		best = _hole_slot(items, sep, x0, row_w - x1, slot + 1)
+		title.custom_minimum_size.x = old_min
+		if best > slot:  # title on the menu button's side of the hole
+			title.custom_minimum_size.x = full
+		else:
+			best = -1
 	if best < 0:
+		# Otherwise only the buttons go up there and the title gets its own line.
+		# Empty space takes its place, so the buttons keep to the ends of the row.
 		if slot >= 0:
-			items[slot].free()
-		return false
-	if title:
-		_title_below(row, title)
+			items[slot] = UI.spacer()
+		best = _hole_slot(items, sep, x0, row_w - x1, maxi(slot, 0))
+		if best < 0:
+			if slot >= 0:
+				items[slot].free()
+			return false
+		if title:
+			_title_below(row, title)
 
 	var left_box := UI.hbox(int(sep))
 	left_box.custom_minimum_size.x = x0
@@ -620,6 +634,15 @@ func _hole_slot(items: Array, sep: float, left: float, right: float, near: int) 
 		if best < 0 or absi(k - near) < absi(best - near):
 			best = k
 	return best
+
+
+## How wide the title is with none of its text cut off.
+static func _full_width(title: Control) -> float:
+	if title is Label:
+		var font := title.get_theme_font("font")
+		var size := title.get_theme_font_size("font_size")
+		return ceilf(font.get_string_size(title.text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x)
+	return title.get_combined_minimum_size().x
 
 
 ## Gives the title its own full-width line under the button row.
@@ -765,7 +788,9 @@ func _rebuild_topbar() -> void:
 			for b in tabs_row.get_children():
 				b.add_theme_stylebox_override("normal", UiTheme.box(Color.TRANSPARENT, 0, Color.TRANSPARENT, 0, Vector4(2, 10, 2, 10)))
 			_top_rows.add_child(sc)
-		_place_top_row(row, title_ctl)
+		# A lone menu button up there looks lost, so the title joins it. With a
+		# back button (e.g. an open book) the buttons fill the strip well enough.
+		_place_top_row(row, title_ctl, not current.has_back())
 	else:
 		if names.size() > 0:
 			var sep := ColorRect.new()
