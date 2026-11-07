@@ -63,8 +63,9 @@ var _password_ready := false  # false until it's been read from where it's kept
 var _secret_thread: Thread   # reads or saves the password (see Keyring)
 ## Kept in sync_cache.json; the other devices' book files are kept in sync_devices/.
 ##   devices: device id -> {book key: md5 of its book file as cached}
-##   texts: book id -> {sig, cover}: the state of its chapters and cover when
-##     they were last found to be on both sides (see _texts_sig)
+##   texts: book id -> {sig, cover, stamp}: the state of its chapters and cover
+##     when they were last found to be on both sides (see _texts_sig), and the
+##     book's text_stamp then: what other devices are told it has sent
 var _cache := {"devices": {}, "texts": {}}
 var _indexes := {}           # device id -> {etag, data}: other devices' index.json
 var _remote_books := {}      # device id -> {book key: data}: their book files, loaded
@@ -351,16 +352,20 @@ func _run_with(dav: WebDav, pool: Array[WebDav]) -> String:
 		var key := Library.sync_key(b)
 		var wanted: Dictionary = covers.get(key, {})
 		var sig := _texts_sig(b, folders.has(_folder_name(key)), wanted, texts.get(key, ""))
+		# read before its chapters are sent, so it never covers a chapter saved
+		# during the sync that wasn't sent (other devices would miss that one)
+		var stamp: Variant = b.get("text_stamp", 0)
 		var last: Dictionary = _cache.texts.get(b.id, {})
 		if last.get("sig", "") == sig:
 			if last.get("cover", "") != "":
 				_cover_names[b.id] = last.cover
+			last.stamp = stamp  # the same as at the last check (it's part of sig)
 			continue  # nothing new on either side since it was last checked
 		_set_progress("Syncing books (%d of %d)…" % [i + 1, all.size()])
 		err = await _sync_book(dav, pool, b, folders, wanted, "Syncing books (%d of %d): %s" % [i + 1, all.size(), b.get("title", "")])
 		if err != "":
 			return err
-		_cache.texts[b.id] = {"sig": sig, "cover": _cover_names.get(b.id, "")}
+		_cache.texts[b.id] = {"sig": sig, "cover": _cover_names.get(b.id, ""), "stamp": stamp}
 	for id in _cache.texts.keys():
 		if not known.has(id):
 			_cache.texts.erase(id)
@@ -529,7 +534,7 @@ func _upload_own(dav: WebDav, pool: Array[WebDav]) -> String:
 			_md5s[b.id] = [rev, cover, md5]
 		if md5 != uploaded.get(key, "") or not on_server.has(name):
 			jobs.append({"key": key, "path": base + "books/" + name, "body": body, "md5": md5})
-		entries.append(_index_entry(b, key, md5))
+		entries.append(_index_entry(b, key, md5, _cache.texts.get(b.id, {}).get("stamp", 0)))
 	if not jobs.is_empty():
 		var work := {"done": 0, "total": jobs.size()}
 		var err := await _in_parallel(pool, jobs, _put_book_file.bind(work))
@@ -913,12 +918,14 @@ func _device_doc(books: Array) -> Dictionary:
 
 
 ## A book's entry in index.json: what changes often, and the md5 of its book file.
-## `texts` tells other devices it has new chapter text (see _texts_sig).
-static func _index_entry(b: Dictionary, key: String, md5: String) -> Dictionary:
+## `texts` tells other devices it has sent new chapter text (see _texts_sig):
+## `stamp` is the book's text_stamp when its chapters were last sent, not the
+## current one, which can be newer than what's on the server.
+static func _index_entry(b: Dictionary, key: String, md5: String, stamp: Variant) -> Dictionary:
 	var p: Dictionary = b.progress
 	var at: int = p.chapter
 	return {
-		"key": key, "md5": md5, "modified": b.modified, "last_read": b.last_read, "texts": b.get("text_stamp", 0),
+		"key": key, "md5": md5, "modified": b.modified, "last_read": b.last_read, "texts": stamp,
 		"progress": {"id": _chapter_id_of(b.chapters[at], at) if at < b.chapters.size() else "", "chapter": at, "paragraph": p.paragraph},
 	}
 
@@ -961,10 +968,12 @@ static func _remote_texts(remote: Array) -> Dictionary:
 ## Sums up what decides whether a book's chapters and cover need syncing: its
 ## chapter text and list here, its cover, the cover wanted, and the other devices'
 ## chapter text. When it's the same as after the last check, nothing has to be
-## listed or sent for the book. ("p": checked since packs exist, so every book's
-## folder is looked at once after the update, and its chapters packed; see _sync_book.)
+## listed or sent for the book. (The letter at the start changes when every book's
+## folder has to be looked at once after an update. "p": packs came in, see
+## _sync_book. "s": index.json's text stamps could be ahead of the chapters on
+## the server, so a device could skip chapters another device sent later.)
 static func _texts_sig(b: Dictionary, on_server: bool, wanted: Dictionary, remote_texts: String) -> String:
-	return "p|%s|%d|%s|%s|%s|%s|%s|%s" % [b.get("text_stamp", 0), b.chapters.size(), b.cover, b.get("cover_set", 0),
+	return "s|%s|%d|%s|%s|%s|%s|%s|%s" % [b.get("text_stamp", 0), b.chapters.size(), b.cover, b.get("cover_set", 0),
 		wanted.get("name", ""), wanted.get("set", 0), remote_texts, on_server]
 
 

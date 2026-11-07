@@ -34,6 +34,13 @@ step synctest_a a_resume "$DAV"
 step synctest_b b_big "$DAV"
 step synctest_a a_big_after "$DAV"
 step synctest_b b_old "$DAV"
+# a chapter saved during a sync gets to the other device with a later sync
+step synctest_a a_race "$DAV"
+step synctest_b b_race "$DAV"
+step synctest_a a_race_save "$DAV"
+step synctest_b b_race_between "$DAV"
+step synctest_a a_race_after "$DAV"
+step synctest_b b_race_after "$DAV"
 # closing the app uploads the last change
 "$GODOT" --headless --path . -- --profile=synctest_a --synctest=a_close --dav="$DAV" --dav-user="$DAV_USER" --dav-pass="$DAV_PASS" 2>&1 | grep -E '^ +FAIL' && fail=1
 echo "  (closed a_close)"
