@@ -2,7 +2,9 @@ class_name LibraryPage
 extends Page
 ## Book grid with "continue reading" hero and filters in the top bar.
 
-const FILTERS := ["All", "Reading", "Ebooks", "Web serials"]
+const FILTERS := ["Reading", "All", "Ebooks", "Web serials"]
+const READING_TAB := 0
+const ALL_TAB := 1
 
 var _filter_text := ""
 ## Book source to show ("" = all): a plugin id, "web" or "file".
@@ -103,12 +105,11 @@ func _rebuild() -> void:
 	if Library.books.is_empty():
 		_content.add_child(_empty_state())
 		return
-	var last := Library.last_read()
-	if tab == 0 and _filter_text == "" and not _filters_active() and not last.is_empty():
-		_content.add_child(_hero(last))
+	if tab == READING_TAB and _filter_text == "" and not _filters_active() and not books.is_empty():
+		_content.add_child(_hero(_most_recent(books)))
 
 	var header := UI.hbox(10)
-	header.add_child(UI.label(FILTERS[tab] if tab > 0 else "All books", "H2"))
+	header.add_child(UI.label("All books" if tab == ALL_TAB else FILTERS[tab], "H2"))
 	var count := UI.label(str(books.size()), "Muted")
 	count.size_flags_vertical = Control.SIZE_SHRINK_END
 	header.add_child(count)
@@ -119,7 +120,10 @@ func _rebuild() -> void:
 			_content.add_child(row)
 
 	if books.is_empty():
-		_content.add_child(UI.label("Nothing here yet.", "Muted"))
+		var none := "Nothing here yet."
+		if tab == READING_TAB and _filter_text == "" and not _filters_active():
+			none = "No books in progress. Open one from All to start reading."
+		_content.add_child(UI.label(none, "Muted", true))
 		return
 	var flow := HFlowContainer.new()
 	flow.add_theme_constant_override("h_separation", 16 if compact else 22)
@@ -141,7 +145,7 @@ func _filtered() -> Array:
 	var out := []
 	for b in Library.books:
 		match tab:
-			1:
+			READING_TAB:
 				if not Library.is_reading(b): continue
 			2:
 				if b.kind == "web": continue
@@ -160,6 +164,16 @@ func _filtered() -> Array:
 	return out
 
 
+## The most recently read of books (the list is sorted by read or added, so the
+## first one may only have been added recently).
+static func _most_recent(books: Array) -> Dictionary:
+	var best: Dictionary = books[0]
+	for b in books:
+		if b.last_read > best.last_read:
+			best = b
+	return best
+
+
 func _filters_active() -> bool:
 	return _source != "" or _tag != "" or not _plugin_filters.is_empty()
 
@@ -167,7 +181,7 @@ func _filters_active() -> bool:
 ## Opens the library showing every book with a tag (from a tag on a book's Details tab).
 func show_tag(tag: String) -> void:
 	_tag = tag
-	tab = 0
+	tab = ALL_TAB
 	_filter_text = ""
 	_source = ""
 	_plugin_filters.clear()
