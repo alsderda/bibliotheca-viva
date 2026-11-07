@@ -107,6 +107,7 @@ func _sites() -> void:
 	check("versions compare by number", Plugins.compare_versions("1.10.0", "1.9"), 1)
 	check("github page to raw files", Plugins.github_raw("https://github.com/someone/plugins"), "https://raw.githubusercontent.com/someone/plugins/HEAD")
 	check("github folder to raw files", Plugins.github_raw("https://github.com/someone/plugins/tree/main/mysite/"), "https://raw.githubusercontent.com/someone/plugins/main/mysite")
+	_fallback_plugins()
 	var sp := SourcePlugin.new()
 	check("library filter matches extra", sp.library_filter_matches({"extra": {"status": "completed"}}, "status", "completed"), true)
 	check("library filter matches list", sp.library_filter_matches({"extra": {"genre": ["a", "b"]}}, "genre", "b"), true)
@@ -646,3 +647,31 @@ func _serve() -> void:
 			c.disconnect_from_host()
 			open.erase(c)
 		await get_tree().process_frame
+
+
+## A fallback plugin (one that takes any link) sorts before site plugins by name,
+## but a site's own plugin wins, and only the site plugin's keys are used, so
+## devices with and without the fallback name chapters alike.
+func _fallback_plugins() -> void:
+	var saved := Plugins.plugins.duplicate()
+	var any := _test_plugin("any", "Any site", {"fallback": true}, "func handles_url(_u: String) -> bool:\n\treturn true\n\nfunc chapter_key(u: String) -> String:\n\treturn \"any:\" + u\n")
+	var site := _test_plugin("site", "My site", {"domains": ["mysite.example"]}, "func chapter_key(u: String) -> String:\n\treturn \"site:\" + u.get_file()\n")
+	var url := "https://www.mysite.example/story/1/chapter/7"
+	Plugins.plugins.assign([any])
+	check("fallback plugin takes links no other plugin handles", Plugins.for_url(url) == any, true)
+	check("fallback plugin gives no chapter keys", Plugins.chapter_key(url), "")
+	Plugins.plugins.assign([any, site])
+	check("site plugin wins over a fallback one", Plugins.for_url(url) == site, true)
+	check("chapter key from the site plugin", Plugins.chapter_key(url), "site:7")
+	Plugins.plugins.assign(saved)
+
+
+func _test_plugin(id: String, name: String, manifest: Dictionary, code: String) -> SourcePlugin:
+	var script := GDScript.new()
+	script.source_code = "extends SourcePlugin\n\n" + code
+	script.reload()
+	var p: SourcePlugin = script.new()
+	p.id = id
+	p.name = name
+	p.manifest = manifest
+	return p

@@ -42,6 +42,7 @@ The app loads plugins at runtime, so they can be installed into a finished app: 
 | `files` | Every file the plugin consists of, besides `plugin.json`. Installing from a link downloads exactly these. Subfolders are fine (`backend/server.py`). |
 | `keep` | Files or folders the plugin creates for itself that survive updates (e.g. `"backend/.venv"`). Optional. |
 | `search` | `false` if the plugin can't search. Optional. |
+| `fallback` | `true` for a plugin that takes any link (its `handles_url` says yes to everything): it's only used for links no other plugin handles, and its `book_key` and `chapter_key` are never used, so books and chapters get the same keys on devices where it can't run. Optional. |
 | `request_gap` | Seconds the app waits after each request to the plugin's domains before sending the next (default 1, up to 60). Optional. |
 
 ## source.gd
