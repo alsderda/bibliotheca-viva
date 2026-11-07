@@ -578,7 +578,7 @@ func _update_safe_area(force := false) -> void:
 func _top_holes() -> Array[Rect2]:
 	var holes: Array[Rect2] = []
 	for c in _cutouts:
-		if c.position.y <= 4 and c.size.y > 0:
+		if c.position.y < 48 and c.size.y > 0:  # punch holes may sit a little below the edge
 			holes.append(c)
 	return holes
 
@@ -600,8 +600,9 @@ func _place_top_row(row: HBoxContainer, title: Control, title_up := false) -> vo
 	var depth := 0.0
 	for h in holes:
 		depth = maxf(depth, h.end.y)
-	# Only when the hole is all that's up there: a visible status bar can't be dodged.
-	if holes.is_empty() or _insets.y > depth + 1 or not _split_row(row, title, holes, style, title_up):
+	# The safe area's top is often deeper than the hole itself (Android makes it
+	# the status bar's height), but the app runs fullscreen, so only the hole matters.
+	if holes.is_empty() or not _split_row(row, title, holes, style, title_up):
 		style.content_margin_top = _insets.y
 	else:
 		style.content_margin_top = maxf(0.0, depth - TOP_ROW_HEIGHT)
@@ -846,17 +847,15 @@ func _rebuild_topbar() -> void:
 			sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
 			sc.add_child(tabs_row)
 			sc.custom_minimum_size.y = 48
-			tabs_row.add_theme_constant_override("separation", 18)
-			# Tighter padding on phones. Every state needs it: a button is sized
-			# for its normal box, so a selected tab with wider padding clips its label.
-			for b in tabs_row.get_children():
-				for state in ["normal", "hover", "pressed", "hover_pressed"]:
-					var sb: StyleBoxFlat = b.get_theme_stylebox(state).duplicate()
-					sb.content_margin_left = 2
-					sb.content_margin_right = 2
-					sb.content_margin_top = 10
-					sb.content_margin_bottom = 10
-					b.add_theme_stylebox_override(state, sb)
+			# On phones the padding is the space between tabs, so each one is
+			# easy to tap. Every state gets the same padding: a button is sized
+			# for its normal box, so a wider selected box would clip its label.
+			tabs_row.add_theme_constant_override("separation", 0)
+			var styles := UiTheme.tab_styles(Vector4(12, 12, 12, 12))
+			for b: Button in tabs_row.get_children():
+				b.custom_minimum_size = Vector2(56, 48)
+				for state in styles:
+					b.add_theme_stylebox_override(state, styles[state])
 			_top_rows.add_child(sc)
 		# A lone menu button up there looks lost, so the title joins it. With a
 		# back button (e.g. an open book) the buttons fill the strip well enough.
