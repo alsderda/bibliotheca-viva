@@ -11,13 +11,14 @@ const FILE := "update_check.json"
 ## Newest release found, or "" when this build is up to date (or nothing is known yet).
 var latest := ""
 var latest_url := ""
+var latest_prerelease := false
 var _checked_at := 0.0
 var _busy := false
 
 
 func _ready() -> void:
 	_load()
-	_update_latest(latest, latest_url)  # a saved find is dropped if this build is as new by now
+	_update_latest(latest, latest_url, latest_prerelease)  # a saved find is dropped if this build is as new by now
 	for arg in OS.get_cmdline_user_args():
 		if arg in ["--selftest", "--plugintest", "--synctest"]:
 			return  # tests stay off the network
@@ -44,6 +45,7 @@ func check() -> void:
 	_checked_at = Time.get_unix_time_from_system()
 	var best := ""
 	var best_url := ""
+	var best_pre := false
 	for rel in r.data:
 		if not rel is Dictionary or rel.get("draft", false):
 			continue
@@ -51,17 +53,20 @@ func check() -> void:
 		if best == "" or newer(tag, best):
 			best = tag
 			best_url = str(rel.get("html_url", ""))
-	_update_latest(best, best_url)
+			best_pre = rel.get("prerelease", false) == true
+	_update_latest(best, best_url, best_pre)
 	_save()
 
 
-func _update_latest(tag: String, url: String) -> void:
+func _update_latest(tag: String, url: String, pre: bool) -> void:
 	var v := tag if tag != "" and newer(tag, current()) else ""
 	var u := url if v != "" else ""
-	if v == latest and u == latest_url:
+	var p := pre and v != ""
+	if v == latest and u == latest_url and p == latest_prerelease:
 		return
 	latest = v
 	latest_url = u
+	latest_prerelease = p
 	changed.emit()
 
 
@@ -97,9 +102,10 @@ func _load() -> void:
 		_checked_at = float(d.get("checked_at", 0.0))
 		latest = str(d.get("latest", ""))
 		latest_url = str(d.get("url", ""))
+		latest_prerelease = d.get("prerelease", false) == true
 
 
 func _save() -> void:
 	var f := FileAccess.open(_path(), FileAccess.WRITE)
 	if f:
-		f.store_string(JSON.stringify({"checked_at": _checked_at, "latest": latest, "url": latest_url}, "\t"))
+		f.store_string(JSON.stringify({"checked_at": _checked_at, "latest": latest, "url": latest_url, "prerelease": latest_prerelease}, "\t"))

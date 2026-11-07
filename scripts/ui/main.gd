@@ -471,7 +471,15 @@ func _refresh_update() -> void:
 	info.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	info.add_child(UI.label("UPDATE AVAILABLE", "Overline"))
-	info.add_child(UI.label("Version %s" % UpdateCheck.latest.trim_prefix("v"), "Small"))
+	var ver := UI.hbox(6, [UI.label("Version %s" % UpdateCheck.latest.trim_prefix("v"), "Small")])
+	if UpdateCheck.latest_prerelease:
+		var pre := UI.label("Pre-release", "Small")
+		pre.add_theme_color_override("font_color", UiTheme.WARN)
+		ver.add_child(pre)
+	for c in ver.get_children():
+		c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ver.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	info.add_child(ver)
 	var row := UI.hbox(10, [icon, info, UI.icon("external", UiTheme.MUTED, 16)])
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	for c in row.get_children():
