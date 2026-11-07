@@ -190,10 +190,31 @@ func get_entry(id: String) -> Dictionary:
 	return {}
 
 
-## The plugin for a link's site, or null.
+## The plugin for a link: the one whose site it is, else a fallback plugin
+## (plugin.json "fallback": true, one that takes links no other plugin handles),
+## else null.
 func for_url(url: String) -> SourcePlugin:
+	var fallback: SourcePlugin = null
 	for p in plugins:
 		if p.handles_url(url):
+			if not is_fallback(p):
+				return p
+			if fallback == null:
+				fallback = p
+	return fallback
+
+
+static func is_fallback(p: SourcePlugin) -> bool:
+	return bool(p.manifest.get("fallback", false))
+
+
+## The plugin whose site the link is on, never a fallback one. Book and chapter
+## keys come from it, so they're the same on every device: a fallback plugin may
+## run on some devices only (e.g. one that needs a desktop), and Sync names
+## chapter files by these keys.
+func _site_plugin(url: String) -> SourcePlugin:
+	for p in plugins:
+		if not is_fallback(p) and p.handles_url(url):
 			return p
 	return null
 
@@ -204,12 +225,12 @@ func display_name(id: String) -> String:
 
 
 func book_key(url: String) -> String:
-	var p := for_url(url)
+	var p := _site_plugin(url)
 	return p.book_key(url) if p else ""
 
 
 func chapter_key(url: String) -> String:
-	var p := for_url(url)
+	var p := _site_plugin(url)
 	return p.chapter_key(url) if p else ""
 
 
