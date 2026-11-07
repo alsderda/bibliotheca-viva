@@ -136,13 +136,16 @@ func _refresh(p: SourcePlugin, book: Dictionary, background: bool) -> Dictionary
 		return {"new": 0, "error": res.error}
 	var known := {}
 	for c in book.chapters:
-		known[Library.chapter_key(c.url)] = true
+		known[Library.chapter_key(c.url)] = c
 	var added := 0
 	var first_new: int = book.chapters.size()
 	for c in res.novel.chapters:
-		if not known.has(Library.chapter_key(c.url)):
+		var old: Variant = known.get(Library.chapter_key(c.url))
+		if old == null:
 			book.chapters.append({"title": c.title, "url": c.url, "date": c.get("date", 0)})
 			added += 1
+		elif float(old.get("date", 0)) <= 0 and float(c.get("date", 0)) > 0:
+			old.date = c.date  # fill in dates an older plugin version didn't report
 	_store_excerpts(book, res.novel.chapters, 0)
 	var fields := {"last_checked": Time.get_unix_time_from_system(), "chapters": book.chapters}
 	if res.novel.has("extra"):
