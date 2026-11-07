@@ -23,6 +23,7 @@ var _continue_box: Control
 var _continue_key := ""  # book id and chapter the Continue card shows
 var _listening_box: Control
 var _bridge_row: VBoxContainer
+var _update_box: VBoxContainer
 var _topbar: PanelContainer
 var _top_rows: VBoxContainer
 var _host: Control
@@ -115,6 +116,7 @@ func _ready() -> void:
 	Plugins.status_changed.connect(_refresh_bridge)
 	Plugins.changed.connect(_refresh_bridge)
 	Plugins.message.connect(toast)
+	UpdateCheck.changed.connect(_refresh_update)
 	Speech.state_changed.connect(func(_p): _refresh_listening())
 	Speech.paragraph_started.connect(func(_i): _refresh_listening())
 	get_viewport().size_changed.connect(_on_resize)
@@ -131,6 +133,7 @@ func _ready() -> void:
 	navigate("library")
 	_refresh_continue()
 	_refresh_bridge()
+	_refresh_update()
 
 	if "--selftest" in OS.get_cmdline_user_args():
 		add_child(load("res://scripts/dev/selftest.gd").new())
@@ -293,6 +296,8 @@ func _build_sidebar() -> PanelContainer:
 	col.add_child(_listening_box)
 	_bridge_row = UI.vbox(4)
 	col.add_child(UI.margin(_bridge_row, 10, 10, 6, 6))
+	_update_box = UI.vbox(0)
+	col.add_child(_update_box)
 	_add_nav(col, "settings", "Settings", "settings")
 	return side
 
@@ -443,6 +448,41 @@ func _refresh_listening() -> void:
 	card.add_child(m)
 	card.pressed.connect(func(): close_drawer(); show_listening())
 	_listening_box.add_child(UI.margin(card, 0, 6, 0, 0))
+
+
+## Notice above Settings when GitHub has a newer release; opens it in the system browser.
+func _refresh_update() -> void:
+	if _update_box == null:
+		return
+	UI.clear(_update_box)
+	if UpdateCheck.latest == "":
+		return
+	var b := Button.new()
+	b.focus_mode = Control.FOCUS_NONE
+	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	b.tooltip_text = "Open the release page in your browser"
+	b.add_theme_stylebox_override("normal", UiTheme.box(UiTheme.SURFACE, 12, UiTheme.ACCENT, 1))
+	b.add_theme_stylebox_override("hover", UiTheme.box(UiTheme.SURFACE_2, 12, UiTheme.ACCENT, 1))
+	b.add_theme_stylebox_override("pressed", UiTheme.box(UiTheme.SURFACE_2, 12, UiTheme.ACCENT, 1))
+	b.custom_minimum_size = Vector2(0, 52)
+	var icon := UI.icon("download", UiTheme.ACCENT, 20)
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var info := UI.vbox(2)
+	info.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.add_child(UI.label("UPDATE AVAILABLE", "Overline"))
+	info.add_child(UI.label("Version %s" % UpdateCheck.latest.trim_prefix("v"), "Small"))
+	var row := UI.hbox(10, [icon, info, UI.icon("external", UiTheme.MUTED, 16)])
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for c in row.get_children():
+		c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		(c as Control).size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var m := UI.margin(row, 12, 8, 12, 8)
+	m.set_anchors_preset(Control.PRESET_FULL_RECT)
+	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	b.add_child(m)
+	b.pressed.connect(func(): close_drawer(); OS.shell_open(UpdateCheck.latest_url))
+	_update_box.add_child(UI.margin(b, 0, 6, 0, 6))
 
 
 ## Status of plugins that run a helper (e.g. a local server), above Settings.
