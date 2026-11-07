@@ -796,6 +796,7 @@ func _about() -> void:
 	_section("Bibliothéca-viva %s" % ProjectSettings.get_setting("application/config/version", "?"), [
 		UI.label("Build %s" % ProjectSettings.get_setting("application/config/version_code", "?"), "Small"),
 		UI.label("An ebook reader with text-to-speech, library sync over WebDAV, and a plugin system for fetching books from web serial sites. Built with Godot %s." % Engine.get_version_info().string, "Muted", true),
+		_row("Source code", "Code, issues and releases on GitHub.", _external_link("GitHub", "https://github.com/alsderda/bibliotheca-viva")),
 		_row("Data folder", ProjectSettings.globalize_path(Settings.data_dir()), UI.button("Open", "external", "", func(): OS.shell_open(ProjectSettings.globalize_path(Settings.data_dir())))),
 	])
 	_troubleshooting()
