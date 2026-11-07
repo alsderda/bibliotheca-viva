@@ -45,6 +45,7 @@ const PATHS := {
 	"pencil": "<path d='M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z'/>",
 	"arrow_up": "<path d='m18 15-6-6-6 6'/>",
 	"arrow_down": "<path d='m6 9 6 6 6-6'/>",
+	"share": "<circle cx='18' cy='5' r='3'/><circle cx='6' cy='12' r='3'/><circle cx='18' cy='19' r='3'/><path d='m8.59 13.51 6.83 3.98'/><path d='m15.41 6.51-6.82 3.98'/>",
 	"copy": "<rect x='8' y='8' width='13' height='13' rx='2'/><path d='M4 16V5a1 1 0 0 1 1-1h11'/>",
 	"clipboard": "<rect x='8' y='2' width='8' height='4' rx='1'/><path d='M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2'/>",
 	"replace": "<path d='M14 4h6v6'/><path d='M20 4 13 11'/><path d='M4 14h6v6'/><path d='m4 20 7-7'/>",

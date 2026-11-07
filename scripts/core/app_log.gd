@@ -9,6 +9,8 @@ extends Node
 const DIR := "logs"
 const KEEP_FILES := 5
 const MAX_BYTES := 8 * 1024 * 1024  # per file; later lines are dropped
+const SHARE_PLUGIN := "BibliothecaVivaShare"  # addons/android_share
+const SHARE_DIR := "user://share"  # the file handed to the share menu (inside the app's storage)
 
 var _sink: _Sink
 var _started := false  # true once start-up is over (later logs are switched on by hand)
@@ -91,6 +93,29 @@ func export_to(path: String) -> bool:
 		return false
 	f.store_string(export_text())
 	return f.get_error() == OK
+
+
+## True where share() works (Android, with the share plugin in the build).
+static func can_share() -> bool:
+	return Engine.has_singleton(SHARE_PLUGIN)
+
+
+## Opens Android's share menu with all kept logs as one text file. -> false if it can't.
+func share() -> bool:
+	if not can_share():
+		return false
+	DirAccess.make_dir_recursive_absolute(SHARE_DIR)
+	for old in DirAccess.get_files_at(SHARE_DIR):  # earlier exports, already handed over
+		DirAccess.remove_absolute(SHARE_DIR.path_join(old))
+	var path := SHARE_DIR.path_join(export_name())
+	if not export_to(path):
+		return false
+	return bool(Engine.get_singleton(SHARE_PLUGIN).share(ProjectSettings.globalize_path(path), "text/plain", "Bibliothéca-viva logs"))
+
+
+## File name for an export, e.g. bibliotheca-viva-log-2026-11-07.txt.
+static func export_name() -> String:
+	return "bibliotheca-viva-log-%s.txt" % Time.get_date_string_from_system()
 
 
 ## Deletes every log file except the one being written.

@@ -817,10 +817,15 @@ func _troubleshooting() -> void:
 	var count := AppLog.files().size()
 	var kept := "No logs kept." if count == 0 else "%d %s kept, %s." % [count, "log" if count == 1 else "logs", String.humanize_size(AppLog.total_bytes())]
 	var actions := _chip_row()
+	if AppLog.can_share():  # Android: send or save the file; the clipboard is too small for long logs
+		actions.add_child(UI.button("Share…", "share", "", func():
+			if not AppLog.share():
+				main.toast("Couldn't share the logs", "error")))
 	actions.add_child(UI.button("Export…", "download", "", _export_log))
-	actions.add_child(UI.button("Copy", "copy", "", func():
-		DisplayServer.clipboard_set(AppLog.export_text())
-		main.toast("Logs copied to the clipboard", "ok")))
+	if not AppLog.can_share():
+		actions.add_child(UI.button("Copy", "copy", "", func():
+			DisplayServer.clipboard_set(AppLog.export_text())
+			main.toast("Logs copied to the clipboard", "ok")))
 	if OS.has_feature("pc"):
 		actions.add_child(UI.button("Open folder", "external", "", func(): OS.shell_open(ProjectSettings.globalize_path(AppLog.folder()))))
 	actions.add_child(UI.button("Delete", "trash", "GhostButton", func():
@@ -831,7 +836,7 @@ func _troubleshooting() -> void:
 		(b as Button).disabled = count == 0
 	_section("Troubleshooting", [
 		_row("Keep a log", "Writes what the app does, with the time, to a file on this device: errors, closing, sync and downloads. Nothing is sent anywhere. Each start makes a new log, and the last %d are kept." % AppLog.KEEP_FILES, on),
-		UI.label(kept + " Export or copy them to attach to a bug report.", "Small", true),
+		UI.label(kept + (" Share or export them" if AppLog.can_share() else " Export or copy them") + " to attach to a bug report.", "Small", true),
 		actions,
 	])
 
@@ -847,7 +852,7 @@ func _export_log() -> void:
 			var ok := AppLog.export_to(path)
 			main.toast("Logs saved to " + path.get_file() if ok else "Couldn't save the logs there", "ok" if ok else "error"))
 		add_child(_log_dialog)
-	_log_dialog.current_file = "bibliotheca-viva-log-%s.txt" % Time.get_date_string_from_system()
+	_log_dialog.current_file = AppLog.export_name()
 	_log_dialog.popup_centered_ratio(0.6)
 
 
