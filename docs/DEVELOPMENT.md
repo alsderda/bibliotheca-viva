@@ -80,10 +80,11 @@ sdkmanager --sdk_root=$HOME/Library/Android/sdk "platform-tools" "build-tools;36
 
 The script finds the JDK and SDK in the usual places (or `JAVA_HOME`, `ANDROID_HOME`) and fills in Godot's Editor Settings → Export → Android paths if they're empty. Debug builds are signed with the standard Android debug key (`~/.android/debug.keystore`, created if missing), which is fine for sideloading: copy the APK to the phone and open it, or use `--install` with USB debugging on.
 
-The export is a Gradle build so that `addons/android_speech` can add to it:
+The export is a Gradle build so that `addons/android_speech` and `addons/android_keystore` can add to it:
 
 - a `<queries>` entry for `TTS_SERVICE`. Without it, Android 11+ hides third-party TTS engines (RHVoice, eSpeak, …) from the app and silently falls back to Google TTS.
 - a small Java plugin (`addons/android_speech/java`, copied into the build at export) that plays the speech itself from a foreground service. Godot's main loop stops while the app is in the background, so `scripts/core/speech.gd` hands the plugin everything it should read, with the pauses, in advance.
+- another Java plugin (`addons/android_keystore/java`) that encrypts the sync password with an AES key kept in the Android Keystore, for `scripts/core/keyring.gd`.
 
 The script installs Godot's Android build template into `android/` (git-ignored) on the first run and again when Godot's version changes. The first build downloads Gradle and its dependencies, so it needs internet and takes a few minutes.
 

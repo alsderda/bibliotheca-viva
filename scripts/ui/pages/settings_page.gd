@@ -732,7 +732,7 @@ func _sync() -> void:
 		UI.label("Keeps your library, saved chapters, reading position, text rules and settings the same on all your devices, through a folder on a WebDAV server. The app creates a bibliotheca-viva folder there.", "Muted", true),
 		_row("Server address", "The WebDAV address from your provider (see below).", url),
 		_row("Username", "", user),
-		_row("Password", "Use an app password if your provider has them.", password),
+		_row("Password", "Use an app password if your provider has them. Kept in %s." % Sync.password_store_name(), password),
 		UI.hbox(12, [save, result]),
 		_row("Sync", "Syncs at start, a few seconds after changes, every 10 minutes, and when closing.", on),
 		_row("This device", "Shown to your other devices.", name),

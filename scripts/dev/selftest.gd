@@ -13,6 +13,7 @@ func _ready() -> void:
 	_book_search()
 	_sites()
 	_versions()
+	_sync_password()
 	await _word_counts()
 	await _fetch_manager()
 	await _pacing()
@@ -243,6 +244,29 @@ func _storage() -> void:
 	Library.tombstones = keep_tombs
 	Library.save()
 	Library.flush()
+
+
+## The sync password is saved in the system keyring, or the fallback file where
+## there's none (the Linux CI runner), and an old fallback file is moved over.
+func _sync_password() -> void:
+	var id := "selftest-password"
+	var sealed := ProjectSettings.globalize_path(Settings.data_dir() + "/selftest_secret.sealed")
+	var file := Settings.data_dir() + "/selftest_secret.dat"
+	var key := "selftest-key"
+	var pw := "p\u00e4ss \"word' $x;\n"
+	var where := Sync._write_password(pw, id, sealed, file, key)
+	check("password saved somewhere", where in ["keyring", "file"], true)
+	check("fallback file only without a keyring", FileAccess.file_exists(file), where == "file")
+	check("password read back", Sync._read_password(id, sealed, file, key), {"password": pw, "where": where})
+	Keyring.erase(id, sealed)
+	var f := FileAccess.open_encrypted_with_pass(file, FileAccess.WRITE, key)
+	f.store_string("old")
+	f.close()
+	check("old password file read", Sync._read_password(id, sealed, file, key).password, "old")
+	check("old password file moved when there's a keyring", FileAccess.file_exists(file), where == "file")
+	Keyring.erase(id, sealed)
+	DirAccess.remove_absolute(file)
+	check("nothing saved, nothing read", Sync._read_password(id, sealed, file, key), {"password": "", "where": ""})
 
 
 ## Each saved chapter's word count is kept with the chapter and moves with it.

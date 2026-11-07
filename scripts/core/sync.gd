@@ -59,6 +59,8 @@ var devices: Array = []      # [{id, name, platform, updated}] other devices on 
 
 var _state := {}             # enabled, url, user, device_id, device_name, last_sync, uploaded_md5, uploaded_books
 var _password := ""
+var _password_ready := false  # false until it's been read from where it's kept
+var _secret_thread: Thread   # reads or saves the password (see Keyring)
 ## Kept in sync_cache.json; the other devices' book files are kept in sync_devices/.
 ##   devices: device id -> {book key: md5 of its book file as cached}
 ##   texts: book id -> {sig, cover}: the state of its chapters and cover when
@@ -80,6 +82,7 @@ var _periodic: Timer
 
 func _ready() -> void:
 	_load_state()
+	_load_password()
 	_debounce = Timer.new()
 	_debounce.one_shot = true
 	_debounce.timeout.connect(sync_now)
@@ -131,7 +134,16 @@ func user_name() -> String:
 
 
 func has_password() -> bool:
-	return _password != ""
+	if _password_ready:
+		return _password != ""
+	return _state.get("password_in", "") != "" or FileAccess.file_exists(_secret_path())
+
+
+## Where the password is kept on this device, for the settings page.
+func password_store_name() -> String:
+	if _state.get("password_in", "") != "file" and Keyring.backend_name() != "":
+		return Keyring.backend_name()
+	return "an encrypted file in the app's data folder (no system keyring found)"
 
 
 func device_id() -> String:
@@ -166,6 +178,7 @@ func configure(url: String, user: String, password: String) -> void:
 	_state.user = user.strip_edges()
 	if password != "":
 		_password = password
+		_password_ready = true
 		_save_password()
 	_save_state()
 	status_changed.emit()
@@ -184,6 +197,7 @@ func set_enabled(on: bool) -> void:
 func test_connection() -> String:
 	if not is_configured():
 		return "Enter the server address first."
+	await _wait_for_password()
 	var r := await WebDav.new(server_url(), user_name(), _password).list("")
 	return "" if r.ok else r.error
 
@@ -262,6 +276,7 @@ func _set_progress(text: String) -> void:
 # --- the sync ----------------------------------------------------------------
 
 func _run() -> String:
+	await _wait_for_password()
 	var pool: Array[WebDav] = []
 	for n in PARALLEL:
 		var d := WebDav.new(server_url(), user_name(), _password)
@@ -1379,8 +1394,19 @@ static func _remove_tree(path: String) -> void:
 	DirAccess.remove_absolute(path)
 
 
+## Fallback for systems without a keyring: encrypted with a key made from this
+## device's id. That keeps it out of plain view, but isn't strong protection.
 func _secret_path() -> String:
 	return Settings.data_dir() + "/sync_secret.dat"
+
+
+## Where Keyring keeps the encrypted password on Windows and Android.
+func _sealed_path() -> String:
+	return ProjectSettings.globalize_path(Settings.data_dir() + "/sync_secret.sealed")
+
+
+func _keyring_id() -> String:
+	return "sync-" + Settings.profile
 
 
 func _load_state() -> void:
@@ -1396,9 +1422,6 @@ func _load_state() -> void:
 		_cache = cache
 	else:
 		_remove_tree(_remote_dir())
-	var f := FileAccess.open_encrypted_with_pass(_secret_path(), FileAccess.READ, _secret_key())
-	if f:
-		_password = f.get_as_text()
 	_save_state()
 
 
@@ -1414,12 +1437,83 @@ func _save_cache() -> void:
 		f.store_string(JSON.stringify(_cache))
 
 
-## The password is stored encrypted with a key tied to this device. That keeps it
-## out of plain view in the data folder; it isn't strong protection.
+# --- the password ------------------------------------------------------------
+# It's kept in the system's keyring (see Keyring) and, where there is none, in the
+# fallback file. _state.password_in says which: "keyring", "file" or "" (none).
+# Reading and saving run in a thread, since the keyring helpers can be slow to start.
+
+func _load_password() -> void:
+	if not is_configured() and not FileAccess.file_exists(_secret_path()):
+		_password_ready = true
+		return
+	var found: Dictionary = await _in_secret_thread(_read_password.bind(_keyring_id(), _sealed_path(), _secret_path(), _secret_key()))
+	if _password_ready:  # a new password was entered meanwhile
+		return
+	_password = found.password
+	_password_ready = true
+	_state.password_in = found.where
+	_save_state()
+	status_changed.emit()
+
+
 func _save_password() -> void:
-	var f := FileAccess.open_encrypted_with_pass(_secret_path(), FileAccess.WRITE, _secret_key())
+	var where: String = await _in_secret_thread(_write_password.bind(_password, _keyring_id(), _sealed_path(), _secret_path(), _secret_key()))
+	_state.password_in = where
+	_save_state()
+	status_changed.emit()
+
+
+func _wait_for_password() -> void:
+	while not _password_ready:
+		await get_tree().process_frame
+
+
+## Runs `job` in a thread, one at a time, and returns its result.
+func _in_secret_thread(job: Callable) -> Variant:
+	while _secret_thread != null:
+		await get_tree().process_frame
+	_secret_thread = Thread.new()
+	_secret_thread.start(job)
+	while _secret_thread.is_alive():
+		await get_tree().process_frame
+	var result: Variant = _secret_thread.wait_to_finish()
+	_secret_thread = null
+	return result
+
+
+func _exit_tree() -> void:
+	if _secret_thread != null:
+		_secret_thread.wait_to_finish()
+
+
+## In a thread. Reads the keyring first, then the fallback file, and moves a
+## password found in the file into the keyring. -> {password, where}
+static func _read_password(id: String, sealed: String, file: String, key: String) -> Dictionary:
+	var secret: Variant = Keyring.fetch(id, sealed)
+	if secret is String and secret != "":
+		return {"password": secret, "where": "keyring"}
+	var f := FileAccess.open_encrypted_with_pass(file, FileAccess.READ, key)
+	if f == null:
+		return {"password": "", "where": ""}
+	var password := f.get_as_text()
+	f.close()
+	if password != "" and Keyring.store(id, password, sealed):
+		DirAccess.remove_absolute(file)
+		return {"password": password, "where": "keyring"}
+	return {"password": password, "where": "file" if password != "" else ""}
+
+
+## In a thread. -> where it was saved: "keyring" or "file".
+static func _write_password(password: String, id: String, sealed: String, file: String, key: String) -> String:
+	if Keyring.store(id, password, sealed):
+		if FileAccess.file_exists(file):
+			DirAccess.remove_absolute(file)
+		return "keyring"
+	Keyring.erase(id, sealed)  # don't leave an older password behind
+	var f := FileAccess.open_encrypted_with_pass(file, FileAccess.WRITE, key)
 	if f:
-		f.store_string(_password)
+		f.store_string(password)
+	return "file"
 
 
 static func _secret_key() -> String:
