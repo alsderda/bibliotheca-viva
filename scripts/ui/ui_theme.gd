@@ -56,6 +56,19 @@ static func _weight(base: FontFile, w: int) -> FontVariation:
 	return v
 
 
+## Styles for a top-bar tab (text with an accent underline when selected),
+## by button state, with `pad` as the padding.
+static func tab_styles(pad: Vector4) -> Dictionary:
+	var normal := box(Color.TRANSPARENT, 0, Color.TRANSPARENT, 0, pad)
+	var sel := normal.duplicate()
+	sel.border_width_bottom = 2
+	sel.border_color = ACCENT
+	var hover := normal.duplicate()
+	hover.border_width_bottom = 2
+	hover.border_color = SURFACE_3
+	return {"normal": normal, "hover": hover, "pressed": sel, "hover_pressed": sel}
+
+
 static func box(color: Color, radius := 8, border := Color.TRANSPARENT, border_w := 0, pad := Vector4(0, 0, 0, 0)) -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
 	s.bg_color = color
@@ -129,16 +142,7 @@ static func build() -> Theme:
 	t.set_constant("h_separation", "NavButton", 12)
 
 	# Secondary nav tabs (top bar): text with an accent underline when selected.
-	var tab_normal := box(Color.TRANSPARENT, 0, Color.TRANSPARENT, 0, Vector4(4, 18, 4, 16))
-	var tab_sel := box(Color.TRANSPARENT, 0, ACCENT, 0, Vector4(4, 18, 4, 16))
-	tab_sel.border_width_bottom = 2
-	tab_sel.border_color = ACCENT
-	var tab_hover := tab_normal.duplicate()
-	tab_hover.border_width_bottom = 2
-	tab_hover.border_color = SURFACE_3
-	_variation(t, "TabButton", "Button", {
-		"normal": tab_normal, "hover": tab_hover, "pressed": tab_sel, "hover_pressed": tab_sel,
-	}, {"font_color": MUTED, "font_hover_color": TEXT, "font_pressed_color": TEXT, "font_hover_pressed_color": TEXT})
+	_variation(t, "TabButton", "Button", tab_styles(Vector4(4, 18, 4, 16)), {"font_color": MUTED, "font_hover_color": TEXT, "font_pressed_color": TEXT, "font_hover_pressed_color": TEXT})
 	t.set_font("font", "TabButton", sans_medium)
 
 	_variation(t, "ChipButton", "Button", {
