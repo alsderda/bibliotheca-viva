@@ -310,6 +310,100 @@ func b_old() -> void:
 	check("all 30 old chapters", n, 30)
 
 
+func race_book() -> Dictionary:
+	for b in Library.books:
+		if b.title == "Race Book":
+			return b
+	return {}
+
+
+## A chapter saved while a sync is running, after its book was synced (or when
+## the app is closed during a download) goes up with a later sync. A device that
+## syncs in between, and finds nothing new then, must still get it afterwards.
+func a_race() -> void:
+	var chapters := []
+	for i in 3:
+		chapters.append({"title": "Race %d" % i, "url": "https://example.com/race/%d" % i, "date": 0})
+	var book := Library.add_book({"title": "Race Book", "source": "web", "url": "https://example.com/race", "chapters": chapters})
+	Library.store_chapter(book.id, 0, "Race 0", paras("race 0"))
+	Library.store_chapter(book.id, 1, "Race 1", paras("race 1"))
+	await sync()
+
+
+func b_race() -> void:
+	await sync()
+	await sync("second sync")  # nothing new: the book's check is remembered
+	var book := race_book()
+	check("race book arrived", [Library.has_full_chapter(book.id, 0), Library.has_full_chapter(book.id, 1)], [true, true])
+
+
+func a_race_save() -> void:
+	var result := {}
+	var run := func(): result.err = await Sync.sync_now()
+	run.call()
+	while Sync.progress_text != "Saving…" and Sync.running:
+		await get_tree().process_frame
+	check("still syncing when the chapter is saved", Sync.running, true)
+	Library.store_chapter(race_book().id, 2, "Race 2", paras("race 2"))
+	while Sync.running:
+		await get_tree().process_frame
+	check("sync during the save has no error", result.get("err"), "")
+
+
+func b_race_between() -> void:
+	await sync()
+
+
+func a_race_after() -> void:
+	await sync()
+
+
+func b_race_after() -> void:
+	await sync()
+	check("chapter saved during a sync arrived", Library.has_full_chapter(race_book().id, 2), true)
+
+
+## A chapter that's gone from the server although A says it sent it: B, which
+## lacks it, asks for it in its index.json, and A sends it again.
+func a_gone() -> void:
+	var book := race_book()
+	book.chapters.append({"title": "Race 3", "url": "https://example.com/race/3", "date": 0})
+	Library.update_book(book.id, {"chapters": book.chapters})
+	Library.store_chapter(book.id, 3, "Race 3", paras("race 3"))
+	await sync()
+	var name := Sync._chapter_id_of(book.chapters[3], 3) + ".json"
+	var folder := "books/%s/" % Sync._folder_name(Library.sync_key(book))
+	check("chapter sent", name in await server_files(folder), true)
+	var dav := WebDav.new(Sync.server_url(), Sync.user_name(), Sync._password)
+	await dav.remove("bibliotheca-viva/" + folder + name)
+	check("chapter removed on the server", name in await server_files(folder), false)
+
+
+func b_gone() -> void:
+	await sync()
+	var book := race_book()
+	check("chapter isn't here", Library.has_full_chapter(book.id, 3), false)
+	check("asks for it", Sync._missing_doc().get(Library.sync_key(book), []).size(), 1)
+
+
+func a_gone_fix() -> void:
+	await sync()
+	var book := race_book()
+	var name := Sync._chapter_id_of(book.chapters[3], 3) + ".json"
+	check("chapter sent again", name in await server_files("books/%s/" % Sync._folder_name(Library.sync_key(book))), true)
+
+
+func b_gone_after() -> void:
+	await sync()
+	var book := race_book()
+	check("chapter arrived", Library.has_full_chapter(book.id, 3), true)
+	check("no longer asks for it", Sync._missing_doc().has(Library.sync_key(book)), false)
+	var before := WebDav.requests
+	await sync("quiet sync")
+	print("       requests: ", WebDav.requests - before)
+	check("quiet sync makes few requests", WebDav.requests - before < 12, true)
+
+
 ## Change something, then close the window: Sync should upload it before quitting.
 func a_close() -> void:
 	Settings.set_value("font_size", 30)

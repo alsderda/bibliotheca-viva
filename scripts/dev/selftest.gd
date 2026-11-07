@@ -323,7 +323,7 @@ func _paragraph_bookmarks() -> void:
 	Library.replace_chapters(b.id, [{"title": "Prologue", "url": "https://example.com/c/0"}] + b.chapters)
 	check("bookmark follows its chapter", Library.bookmark_at(b, 2, 4).get("id", ""), m.id)
 
-	var remote: Array = Sync._book_file(b).bookmarks.duplicate(true)
+	var remote: Array = Sync._book_file(b, "").bookmarks.duplicate(true)
 	for r in remote:
 		r.chapter = 0  # the other device numbers chapters differently; the chapter id matches
 		if r.id == m.id:
@@ -340,6 +340,14 @@ func _paragraph_bookmarks() -> void:
 	check("new bookmark added by chapter id", Library.bookmark_at(b, 1, 2).get("name", ""), "From phone")
 	var old: Array = [Library.bookmark_at(b, 2, 4).merged({"name": "Old name", "modified": 0})]
 	check("older change loses", Sync._merged_bookmarks(b, [{"bookmarks": old}]) == b.bookmarks, true)
+
+	# on_server: one bit per chapter, read back as chapter ids
+	var ids := Sync._chapter_ids(b.chapters)
+	Sync._cache.server[b.id] = {ids[0]: true, ids[2]: true}
+	var file: Dictionary = Sync._book_file(b, Sync._flags(b))
+	check("on_server read back", Sync._flagged_ids(file).keys(), [ids[0], ids[2]])
+	Sync._cache.server.erase(b.id)
+	check("nothing on the server, no on_server", Sync._flags(b), "")
 	Library.remove_book(b.id, false)
 
 
