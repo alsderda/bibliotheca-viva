@@ -52,13 +52,15 @@ static class Setup
 
     static int RunSetup(string[] args)
     {
-        // Silent mode for scripts: Setup.exe "/dir=C:\some\folder" [/desktop]
+        // Silent mode for scripts: Setup.exe "/dir=C:\some\folder" [/desktop] [/deletesetup]
         foreach (string arg in args)
         {
             if (arg.StartsWith("/dir=", StringComparison.OrdinalIgnoreCase))
             {
-                try { Install(arg.Substring(5).Trim('"'), HasArg(args, "/desktop") ? true : (bool?)null); return 0; }
+                try { Install(arg.Substring(5).Trim('"'), HasArg(args, "/desktop") ? true : (bool?)null); }
                 catch (Exception e) { Console.Error.WriteLine(e.Message); return 2; }
+                if (HasArg(args, "/deletesetup")) DeleteSetupLater();
+                return 0;
             }
         }
 
@@ -66,7 +68,8 @@ static class Setup
         string defaultDir = RegisteredInstallDir() ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", AppName);
         bool desktop = File.Exists(DesktopShortcut());
-        string target = AskFolder(defaultDir, ref desktop);
+        bool deleteSetup = true;
+        string target = AskFolder(defaultDir, ref desktop, ref deleteSetup);
         if (target == null)
             return 1;
 
@@ -87,6 +90,7 @@ static class Setup
             AppName + " Setup", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
         if (answer == DialogResult.Yes)
             Process.Start(new ProcessStartInfo(Path.Combine(target, ExeName)) { WorkingDirectory = target });
+        if (deleteSetup) DeleteSetupLater();
         return 0;
     }
 
@@ -106,28 +110,30 @@ static class Setup
         };
     }
 
-    // "Install to: [path] [Browse...]  [x] Desktop shortcut  [Install] [Cancel]"
-    static string AskFolder(string defaultDir, ref bool desktop)
+    // "Install to: [path] [Browse...]  [x] Desktop shortcut  [x] Delete installer  [Install] [Cancel]"
+    static string AskFolder(string defaultDir, ref bool desktop, ref bool deleteSetup)
     {
-        var form = MakeDialog(AppName + " Setup", 160);
+        var form = MakeDialog(AppName + " Setup", 184);
         var label = new Label { Text = "Install " + AppName + " to this folder:", Location = new Point(12, 14), AutoSize = true };
         var path = new TextBox { Text = defaultDir, Location = new Point(12, 38), Width = 400 };
         var browse = new Button { Text = "Browse...", Location = new Point(420, 36), Width = 88 };
         var shortcut = new CheckBox { Text = "Create a desktop shortcut", Location = new Point(12, 74), AutoSize = true, Checked = desktop };
-        var install = new Button { Text = "Install", Location = new Point(324, 118), Width = 88, DialogResult = DialogResult.OK };
-        var cancel = new Button { Text = "Cancel", Location = new Point(420, 118), Width = 88, DialogResult = DialogResult.Cancel };
+        var cleanup = new CheckBox { Text = "Delete this installer when done", Location = new Point(12, 98), AutoSize = true, Checked = deleteSetup };
+        var install = new Button { Text = "Install", Location = new Point(324, 142), Width = 88, DialogResult = DialogResult.OK };
+        var cancel = new Button { Text = "Cancel", Location = new Point(420, 142), Width = 88, DialogResult = DialogResult.Cancel };
         browse.Click += delegate
         {
             string picked = PickFolder(form.Handle, path.Text);
             if (picked != null) path.Text = picked;
         };
-        form.Controls.AddRange(new Control[] { label, path, browse, shortcut, install, cancel });
+        form.Controls.AddRange(new Control[] { label, path, browse, shortcut, cleanup, install, cancel });
         form.AcceptButton = install;
         form.CancelButton = cancel;
 
         if (form.ShowDialog() != DialogResult.OK || path.Text.Trim() == "")
             return null;
         desktop = shortcut.Checked;
+        deleteSetup = cleanup.Checked;
         return path.Text.Trim().Trim('"');
     }
 
@@ -383,9 +389,19 @@ static class Setup
     // uninstall.exe and the install folder (rmdir only removes it if it's empty).
     static void DeleteSelfLater(string root)
     {
-        string dir = root.TrimEnd('\\');
-        Process.Start(new ProcessStartInfo("cmd.exe",
-            "/c ping -n 3 127.0.0.1 >nul & del /f /q \"" + root + UninstallerName + "\" & rmdir \"" + dir + "\"")
+        RunLater("del /f /q \"" + root + UninstallerName + "\" & rmdir \"" + root.TrimEnd('\\') + "\"");
+    }
+
+    // The same for Setup.exe itself, once the install is done.
+    static void DeleteSetupLater()
+    {
+        RunLater("del /f /q \"" + Path.GetFullPath(Application.ExecutablePath) + "\"");
+    }
+
+    // Runs cmd commands in a hidden window after a short wait, once this program has exited.
+    static void RunLater(string commands)
+    {
+        Process.Start(new ProcessStartInfo("cmd.exe", "/c ping -n 3 127.0.0.1 >nul & " + commands)
         {
             CreateNoWindow = true,
             UseShellExecute = false,
