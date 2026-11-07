@@ -135,6 +135,7 @@ func _ready() -> void:
 	_refresh_bridge()
 	_refresh_update()
 
+	if Array(OS.get_cmdline_user_args()).any(func(a): return a.begins_with("--zzshot=")): add_child(load("res://scripts/dev/zz_shot.gd").new())
 	if "--selftest" in OS.get_cmdline_user_args():
 		add_child(load("res://scripts/dev/selftest.gd").new())
 	if Array(OS.get_cmdline_user_args()).any(func(a): return a.begins_with("--plugintest=")):
@@ -408,13 +409,19 @@ func _listening_title() -> String:
 	return ""
 
 
+func _listen_button_wanted() -> bool:
+	return _listening_page() != "" and not _listening_visible()
+
+
 func _refresh_listening() -> void:
 	if _listening_box == null:
 		return
 	UI.clear(_listening_box)
-	var show := _listening_page() != "" and not _listening_visible()
-	if is_instance_valid(_top_listen):
+	var show := _listen_button_wanted()
+	if is_instance_valid(_top_listen) and _top_listen.visible != show:
 		_top_listen.visible = show
+		if not _top_holes().is_empty():
+			_rebuild_topbar.call_deferred()  # the row's fit around the hole changed
 	if not show:
 		return
 	var title := _listening_title()
@@ -689,7 +696,7 @@ func _split_row(row: HBoxContainer, title: Control, holes: Array[Rect2], style: 
 func _hole_slot(items: Array, sep: float, left: float, right: float, near: int) -> int:
 	var widths: Array[float] = []
 	for c: Control in items:
-		widths.append(c.get_combined_minimum_size().x)
+		widths.append(c.get_combined_minimum_size().x if c.visible else -1.0)  # hidden: takes no room
 	var best := -1
 	for k in items.size() + 1:
 		if _span(widths.slice(0, k), sep) > left or _span(widths.slice(k), sep) > right:
@@ -721,10 +728,11 @@ func _title_below(row: HBoxContainer, title: Control) -> void:
 
 
 static func _span(widths: Array, sep: float) -> float:
-	if widths.is_empty():
+	var shown := widths.filter(func(w): return w >= 0.0)
+	if shown.is_empty():
 		return 0.0
-	var total := sep * (widths.size() - 1)
-	for w in widths:
+	var total := sep * (shown.size() - 1)
+	for w in shown:
 		total += w
 	return total
 
@@ -833,13 +841,22 @@ func _rebuild_topbar() -> void:
 		_top_listen.icon = Icons.get_icon("headphones", Color.WHITE, 20)
 		for c in ["icon_normal_color", "icon_hover_color", "icon_pressed_color"]:
 			_top_listen.add_theme_color_override(c, UiTheme.ACCENT)
+		# Set now, not in _refresh_listening: a hidden button must not count
+		# when the row is fitted around the camera hole.
+		_top_listen.visible = _listen_button_wanted()
 		actions.add_child(_top_listen)
 	current.build_actions(actions)
 
 	if compact:
 		if not title_fills:
 			row.add_child(UI.spacer())
-		row.add_child(actions)
+		# Each button goes in the row on its own, so they can sit on either side
+		# of the camera hole instead of all having to fit on one side.
+		for c: Control in actions.get_children():
+			actions.remove_child(c)
+			c.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			row.add_child(c)
+		actions.free()
 		_top_rows.add_child(row)
 		if names.size() > 0:
 			var sc := ScrollContainer.new()
