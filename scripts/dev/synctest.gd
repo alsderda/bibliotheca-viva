@@ -236,14 +236,24 @@ func a_big() -> void:
 func a_resume() -> void:
 	Plugins.remove("synctestplugin")
 	await sync()
+	var files := await server_files("books/%s/" % Sync._folder_name(Library.sync_key(big_book())))
+	check("big book sent as packs", files.filter(func(n): return n.ends_with(".json.gz")).size() > 0, true)
+	check("no chapter files of their own", files.filter(func(n): return not n.begins_with("pack-")).size(), 0)
+
+
+func big_book() -> Dictionary:
+	for b in Library.books:
+		if b.title == "Big Book":
+			return b
+	return {}
 
 
 func b_big() -> void:
+	var before := WebDav.requests
 	await sync()
-	var big := {}
-	for b in Library.books:
-		if b.title == "Big Book":
-			big = b
+	print("       requests: ", WebDav.requests - before)
+	check("big book fetched in few requests", WebDav.requests - before < 100, true)
+	var big := big_book()
 	check("removed plugin is gone", Plugins.is_installed("synctestplugin"), false)
 	check("big book arrived", big.is_empty(), false)
 	if big.is_empty():
@@ -253,6 +263,51 @@ func b_big() -> void:
 		if Library.has_full_chapter(big.id, i) and Library.load_chapter(big.id, i).paragraphs[0] == "big %d first paragraph." % i:
 			n += 1
 	check("all 600 chapters, in the right places", n, 600)
+	# a couple of new chapters later go up one by one
+	for i in [600, 601]:
+		big.chapters.append({"title": "Big %d" % i, "url": "https://example.com/big/%d" % i, "date": 0})
+	Library.update_book(big.id, {"chapters": big.chapters})
+	Library.store_chapter(big.id, 600, "Big 600", paras("big 600"))
+	Library.store_chapter(big.id, 601, "Big 601", paras("big 601"))
+	await sync("sync of two new chapters")
+	var files := await server_files("books/%s/" % Sync._folder_name(Library.sync_key(big)))
+	check("new chapters have files of their own", files.filter(func(n): return not n.begins_with("pack-")).size(), 2)
+
+
+func a_big_after() -> void:
+	await sync()
+	var big := big_book()
+	check("new chapters arrived", [Library.has_full_chapter(big.id, 600), Library.has_full_chapter(big.id, 601)], [true, true])
+	# a book an older version sent chapter by chapter: its files are packed now
+	var chapters := []
+	for i in 30:
+		chapters.append({"title": "Old %d" % i, "url": "https://example.com/old/%d" % i, "date": 0})
+	var old := Library.add_book({"title": "Old Book", "source": "web", "url": "https://example.com/old", "chapters": chapters})
+	var dav := WebDav.new(Sync.server_url(), Sync.user_name(), Sync._password)
+	var folder := "bibliotheca-viva/books/%s/" % Sync._folder_name(Library.sync_key(old))
+	await dav.make_dir(folder)
+	for i in 30:
+		Library.store_chapter(old.id, i, "Old %d" % i, paras("old %d" % i))
+		await dav.put(folder + Sync._chapter_id_of(chapters[i], i) + ".json", FileAccess.get_file_as_bytes("%s/%d.json" % [Library.book_dir(old.id), i]))
+	await sync("sync of an old book")
+	var files := await server_files("books/%s/" % Sync._folder_name(Library.sync_key(old)))
+	check("old book's chapters packed", files.filter(func(n): return n.ends_with(".json.gz")).size(), 1)
+
+
+func b_old() -> void:
+	var before := WebDav.requests
+	await sync()
+	print("       requests: ", WebDav.requests - before)
+	check("old book fetched as a pack", WebDav.requests - before < 25, true)
+	var old := {}
+	for b in Library.books:
+		if b.title == "Old Book":
+			old = b
+	var n := 0
+	for i in old.get("chapters", []).size():
+		if Library.has_full_chapter(old.id, i):
+			n += 1
+	check("all 30 old chapters", n, 30)
 
 
 ## Change something, then close the window: Sync should upload it before quitting.

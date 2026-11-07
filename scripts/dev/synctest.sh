@@ -32,6 +32,8 @@ sleep 2; kill $pid 2>/dev/null; wait $pid 2>/dev/null
 echo "  (killed a_big part way)"
 step synctest_a a_resume "$DAV"
 step synctest_b b_big "$DAV"
+step synctest_a a_big_after "$DAV"
+step synctest_b b_old "$DAV"
 # closing the app uploads the last change
 "$GODOT" --headless --path . -- --profile=synctest_a --synctest=a_close --dav="$DAV" --dav-user="$DAV_USER" --dav-pass="$DAV_PASS" 2>&1 | grep -E '^ +FAIL' && fail=1
 echo "  (closed a_close)"

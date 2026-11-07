@@ -10,6 +10,11 @@ extends Node
 ##     books/<hash>.json        a book's details, chapter list and bookmarks
 ##   books/<hash of book key>/  one folder per book
 ##     <chapter id>.json        chapter text; written once, never changed
+##     pack-<md5>.json.gz       many chapters' text in one gzipped file, for when a
+##                              lot of chapters are sent at once (a book's first
+##                              upload); written once, never changed
+##     pack-<md5>.ids.json      the ids of the chapters in that pack; written after
+##                              it, so a pack without one is ignored
 ##     cover-<md5>.png          cover image; named by its content, never changed
 ##   plugins/<id>/<version>/    an installed plugin's files; written once
 ##
@@ -41,6 +46,8 @@ const GC_AFTER := 30 * 86400 # keep a removed book's files this long on the serv
 const CLOSE_WAIT := 10.0     # longest the app waits for a final sync on close
 const PACE := 0.1            # shortest gap between two requests on one connection
 const PARALLEL := 4          # connections used for a book's chapters (Koofr takes ~0.3 s per request)
+const PACK_MIN := 10         # chapters of a book to send at once before they go in packs
+const PACK_BYTES := 2000000  # most chapter text in one pack, before it's gzipped
 
 var running := false
 var last_error := ""
@@ -64,6 +71,7 @@ var _remote_books := {}      # device id -> {book key: data}: their book files, 
 var _md5s := {}              # book id -> [revision, cover, md5] of this device's book file
 var _done := {}              # book id -> {chapter file name: true} known to be on both sides
 var _cover_names := {}       # book id -> remote cover file name
+var _pack_ids := {}          # server path of a pack's .ids.json -> its chapter ids (packs never change)
 var _dirty := false
 var _again := false
 var _applying := false
@@ -944,9 +952,10 @@ static func _remote_texts(remote: Array) -> Dictionary:
 ## Sums up what decides whether a book's chapters and cover need syncing: its
 ## chapter text and list here, its cover, the cover wanted, and the other devices'
 ## chapter text. When it's the same as after the last check, nothing has to be
-## listed or sent for the book.
+## listed or sent for the book. ("p": checked since packs exist, so every book's
+## folder is looked at once after the update, and its chapters packed; see _sync_book.)
 static func _texts_sig(b: Dictionary, on_server: bool, wanted: Dictionary, remote_texts: String) -> String:
-	return "%s|%d|%s|%s|%s|%s|%s|%s" % [b.get("text_stamp", 0), b.chapters.size(), b.cover, b.get("cover_set", 0),
+	return "p|%s|%d|%s|%s|%s|%s|%s|%s" % [b.get("text_stamp", 0), b.chapters.size(), b.cover, b.get("cover_set", 0),
 		wanted.get("name", ""), wanted.get("set", 0), remote_texts, on_server]
 
 
@@ -1077,27 +1086,48 @@ func _sync_book(dav: WebDav, pool: Array[WebDav], b: Dictionary, folders: Dictio
 			return l.error
 	var done: Dictionary = _done.get(b.id, {})
 	_done[b.id] = done
+	var packs := {}    # pack file name -> [chapter file names in it]
+	var in_pack := {}  # chapter file name -> the pack it's in
+	var err := await _read_packs(pool, folder, remote, packs)
+	if err != "":
+		return err
+	for p in packs:
+		for name in packs[p]:
+			in_pack[name] = p
 
 	# work out what to send and fetch, then do it over several connections
-	var jobs := []  # [{name, up}]
+	var downs := []  # chapter file names
+	var ups := []    # [chapter file name, index]
+	var loose := []  # [chapter file name, index]: on the server only as its own file, and here
 	for i in b.chapters.size():
 		var name := _chapter_id_of(b.chapters[i], i) + ".json"
-		if remote.has(name) and done.has(name):
-			continue
+		var on_server := remote.has(name) or in_pack.has(name)
 		var local_full := Library.has_full_chapter(b.id, i)
-		if remote.has(name) and not local_full:
-			jobs.append({"name": name, "up": false})
-		elif local_full and (not remote.has(name) or int(remote[name]) == 0):
-			jobs.append({"name": name, "up": true})
-		elif remote.has(name) and local_full:
+		if remote.has(name) and int(remote[name]) > 0 and not in_pack.has(name) and local_full:
+			loose.append([name, i])
+		if on_server and done.has(name):
+			continue
+		if on_server and not local_full:
+			downs.append(name)
+		elif local_full and not in_pack.has(name) and (not remote.has(name) or int(remote[name]) == 0):
+			ups.append([name, i])
+		elif on_server and local_full:
 			done[name] = true
-	if not exists and jobs.any(func(j): return j.up):
+	# many chapters with only their own files (sent one by one, e.g. by an older
+	# version): pack them too, so a new device fetches them in few requests
+	if loose.size() >= PACK_MIN:
+		ups.append_array(loose)
+	var jobs := _chapter_jobs(b, downs, ups, remote, packs, in_pack)
+	if not exists and jobs.any(func(j): return j.kind in ["put", "put_pack"]):
 		var m := await dav.make_dir(folder)
 		if not m.ok:
 			return m.error
 		exists = true
 	if not jobs.is_empty():
-		var work := {"jobs": jobs, "next": 0, "finished": 0, "running": pool.size(), "error": "",
+		var total := 0
+		for j in jobs:
+			total += int(j.count)
+		var work := {"jobs": jobs, "next": 0, "finished": 0, "total": total, "running": pool.size(), "error": "",
 			"book": b, "folder": folder, "done": done, "label": label, "index": {}, "chapters": null}
 		for d in pool:
 			_chapter_worker(d, work)
@@ -1149,33 +1179,158 @@ func _chapter_worker(dav: WebDav, work: Dictionary) -> void:
 	while work.error == "" and work.next < jobs.size() and not Library.get_book(b.id).is_empty():
 		var job: Dictionary = jobs[work.next]
 		work.next += 1
-		var name: String = job.name
 		var r: Dictionary
-		if job.up:
-			var at := _job_index(work, name.get_basename())
-			if at < 0:
-				continue
-			r = await dav.put(work.folder + name, FileAccess.get_file_as_bytes("%s/%d.json" % [Library.book_dir(b.id), at]), "application/json")
-			if r.ok:
-				work.done[name] = true
-		else:
-			r = await dav.fetch(work.folder + name)
-			if r.ok and not Library.get_book(b.id).is_empty():
-				var ch: Variant = JSON.parse_string(r.body.get_string_from_utf8())
-				# the chapter list may have changed while downloading; find the chapter again
-				var at := _job_index(work, name.get_basename())
-				if ch is Dictionary and ch.get("paragraphs") is Array and at >= 0:
-					Library.store_chapter(b.id, at, str(ch.get("title", b.chapters[at].title)), PackedStringArray(ch.paragraphs))
-					work.done[name] = true
+		match job.kind:
+			"put":
+				var at := _job_index(work, job.name.get_basename())
+				if at < 0:
+					continue
+				r = await dav.put(work.folder + job.name, FileAccess.get_file_as_bytes("%s/%d.json" % [Library.book_dir(b.id), at]), "application/json")
+				if r.ok:
+					work.done[job.name] = true
+			"get":
+				r = await dav.fetch(work.folder + job.name)
+				if r.ok and not Library.get_book(b.id).is_empty():
+					var ch: Variant = JSON.parse_string(r.body.get_string_from_utf8())
+					# the chapter list may have changed while downloading; find the chapter again
+					var at := _job_index(work, job.name.get_basename())
+					if ch is Dictionary and ch.get("paragraphs") is Array and at >= 0:
+						Library.store_chapter(b.id, at, str(ch.get("title", b.chapters[at].title)), PackedStringArray(ch.paragraphs))
+						work.done[job.name] = true
+			"put_pack":
+				r = await _put_pack(dav, work, job.names)
+			"get_pack":
+				r = await _get_pack(dav, work, job.name)
 		if not r.ok:
 			work.error = r.error
 			break
-		work.finished += 1
+		work.finished += int(job.count)
 		# shown at most a few times a second; a big book can take many minutes
 		if work.label != "" and Time.get_ticks_msec() - _progress_shown > 250:
 			_progress_shown = Time.get_ticks_msec()
-			_set_progress("%s, %d of %d chapters…" % [work.label, work.finished, jobs.size()])
+			_set_progress("%s, %d of %d chapters…" % [work.label, mini(work.finished, work.total), work.total])
 	work.running -= 1
+
+
+## The jobs for _chapter_worker: {kind, count (chapters it covers), name or names}.
+## Many chapters to send go in packs; a pack is fetched instead of its chapters'
+## own files when it's the only copy of one, or when a good part of it is wanted.
+func _chapter_jobs(b: Dictionary, downs: Array, ups: Array, remote: Dictionary, packs: Dictionary, in_pack: Dictionary) -> Array:
+	var jobs := []
+	var wanted := {}  # pack -> chapters wanted from it
+	var only := {}    # pack -> true: holds a wanted chapter that has no file of its own
+	for name in downs:
+		if in_pack.has(name):
+			var p: String = in_pack[name]
+			wanted[p] = wanted.get(p, 0) + 1
+			if not remote.has(name):
+				only[p] = true
+	var from_pack := {}
+	for p in wanted:
+		if only.has(p) or wanted[p] * 4 >= packs[p].size():
+			jobs.append({"kind": "get_pack", "name": p, "count": wanted[p]})
+			for name in packs[p]:
+				from_pack[name] = true
+	for name in downs:
+		if not from_pack.has(name):
+			jobs.append({"kind": "get", "name": name, "count": 1})
+	if ups.size() < PACK_MIN:
+		for u in ups:
+			jobs.append({"kind": "put", "name": u[0], "count": 1})
+		return jobs
+	var names := []
+	var bytes := 0
+	for u in ups:
+		var f := FileAccess.open("%s/%d.json" % [Library.book_dir(b.id), u[1]], FileAccess.READ)
+		var size := f.get_length() if f else 0
+		if not names.is_empty() and bytes + size > PACK_BYTES:
+			jobs.append({"kind": "put_pack", "names": names, "count": names.size()})
+			names = []
+			bytes = 0
+		names.append(u[0])
+		bytes += size
+	if not names.is_empty():
+		jobs.append({"kind": "put_pack", "names": names, "count": names.size()})
+	return jobs
+
+
+## Fills `packs` (pack file name -> [chapter file names]) from the complete packs
+## in a book's server folder, whose listing is `remote`. -> error or "".
+func _read_packs(pool: Array[WebDav], folder: String, remote: Dictionary, packs: Dictionary) -> String:
+	var fetch := []
+	for n in remote:
+		if n.begins_with("pack-") and n.ends_with(".ids.json") and remote.has(n.trim_suffix(".ids.json") + ".json.gz"):
+			if not _pack_ids.has(folder + n):
+				fetch.append(n)
+	if not fetch.is_empty():
+		var err := await _in_parallel(pool, fetch, func(dav: WebDav, n: String) -> String:
+			var g := await dav.fetch(folder + n)
+			if g.code == 404:
+				return ""
+			if not g.ok:
+				return g.error
+			var ids: Variant = JSON.parse_string(g.body.get_string_from_utf8())
+			_pack_ids[folder + n] = ids if ids is Array else []
+			return "")
+		if err != "":
+			return err
+	for n in remote:
+		if _pack_ids.has(folder + n) and remote.has(n.trim_suffix(".ids.json") + ".json.gz"):
+			packs[n.trim_suffix(".ids.json") + ".json.gz"] = _pack_ids[folder + n].map(func(id): return str(id) + ".json")
+	return ""
+
+
+## Sends chapters (file names) of work.book as one pack, then its list of ids.
+func _put_pack(dav: WebDav, work: Dictionary, names: Array) -> Dictionary:
+	var b: Dictionary = work.book
+	var chapters := {}
+	for name in names:
+		var at := _job_index(work, name.get_basename())
+		if at < 0:
+			continue
+		var ch: Variant = JSON.parse_string(FileAccess.get_file_as_string("%s/%d.json" % [Library.book_dir(b.id), at]))
+		if ch is Dictionary and ch.get("paragraphs") is Array:
+			chapters[name.get_basename()] = {"title": str(ch.get("title", "")), "paragraphs": ch.paragraphs}
+	if chapters.is_empty():
+		return {"ok": true}
+	var text := JSON.stringify({"chapters": chapters})
+	var base: String = work.folder + "pack-" + text.md5_text().left(16)
+	var r := await dav.put(base + ".json.gz", text.to_utf8_buffer().compress(FileAccess.COMPRESSION_GZIP), "application/gzip")
+	if not r.ok:
+		return r
+	var ids := chapters.keys()
+	r = await dav.put(base + ".ids.json", JSON.stringify(ids).to_utf8_buffer(), "application/json")  # last: marks it complete
+	if r.ok:
+		_pack_ids[base + ".ids.json"] = ids
+		for id in ids:
+			work.done[id + ".json"] = true
+	return r
+
+
+## Fetches a pack and saves the chapters in it this device doesn't have yet.
+func _get_pack(dav: WebDav, work: Dictionary, name: String) -> Dictionary:
+	var b: Dictionary = work.book
+	var r := await dav.fetch(work.folder + name)
+	if not r.ok or Library.get_book(b.id).is_empty():
+		return r
+	var data: Variant = JSON.parse_string(r.body.decompress_dynamic(-1, FileAccess.COMPRESSION_GZIP).get_string_from_utf8())
+	if not (data is Dictionary and data.get("chapters") is Dictionary):
+		return r  # damaged: its chapters are fetched one by one next time, if they have their own files
+	var saved := 0
+	for id in data.chapters:
+		var ch: Variant = data.chapters[id]
+		var at := _job_index(work, str(id))
+		if at < 0 or not (ch is Dictionary and ch.get("paragraphs") is Array):
+			continue
+		if not Library.has_full_chapter(b.id, at):
+			Library.store_chapter(b.id, at, str(ch.get("title", b.chapters[at].title)), PackedStringArray(ch.paragraphs))
+			saved += 1
+			if saved % 20 == 0:  # counting words takes a while; keep the app responsive
+				await get_tree().process_frame
+				if Library.get_book(b.id).is_empty():
+					return r
+		work.done[str(id) + ".json"] = true
+	return r
 
 
 ## A chapter's current index by its id, from a map that's rebuilt only when the
