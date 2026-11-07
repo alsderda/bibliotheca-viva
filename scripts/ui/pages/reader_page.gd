@@ -187,6 +187,7 @@ func open_book(id: String, ch := -1) -> void:
 	book = Library.get_book(id)
 	if book.is_empty():
 		return
+	Library.set_dropped(id, false)  # opening a dropped book picks it up again
 	chapter = clampi(ch if ch >= 0 else book.progress.chapter, 0, max(0, book.chapters.size() - 1))
 	var para: int = book.progress.paragraph if ch < 0 else 0
 	select_tab(0)
@@ -1045,6 +1046,10 @@ func _build_details() -> void:
 	chips.add_theme_constant_override("v_separation", 6)
 	chips.add_child(UI.chip(BookCard._badge_text(book), UiTheme.ACCENT))
 	chips.add_child(UI.chip(BookCard._source_name(book)))
+	if book.get("dropped", false):
+		chips.add_child(UI.chip("Dropped", UiTheme.BAD))
+	elif Library.is_finished(book):
+		chips.add_child(UI.chip("Finished", UiTheme.GOOD))
 	for tag in book.get("tags", []):
 		var tb := UI.button(tag, "", "ChipButton", func(): main.pages.library.show_tag(tag), UiTheme.MUTED)
 		tb.tooltip_text = "Show the books tagged “%s”" % tag
@@ -1093,6 +1098,11 @@ func _build_details() -> void:
 		var more := UI.button("Add chapters from EPUB", "import", "", _pick_epub)
 		more.tooltip_text = "Add the new chapters of a later EPUB of this book to its end, e.g. the latest chapters of a serial. Chapters it already has are skipped."
 		buttons.add_child(more)
+	var dropped: bool = book.get("dropped", false)
+	var drop := UI.button("Undo drop" if dropped else "Mark as dropped", "refresh" if dropped else "x", "", _toggle_dropped)
+	drop.tooltip_text = "Show this book in the Reading tab again" if dropped \
+		else "Hide this book from the Reading tab until you open it again"
+	buttons.add_child(drop)
 	var del := UI.button("Delete book", "trash", "GhostButton", _confirm_delete, UiTheme.BAD)
 	del.add_theme_color_override("font_color", UiTheme.BAD)
 	del.tooltip_text = "Remove this book and its downloaded chapters from the library"
@@ -1141,6 +1151,14 @@ func _edit_details() -> void:
 			book = Library.get_book(id)
 			_build_details()
 			header_changed.emit())
+
+
+func _toggle_dropped() -> void:
+	var dropped: bool = not book.get("dropped", false)
+	Library.set_dropped(book.id, dropped)
+	book = Library.get_book(book.id)
+	_build_details()
+	main.toast("Marked as dropped" if dropped else "Back in your Reading list", "ok")
 
 
 func _confirm_delete() -> void:

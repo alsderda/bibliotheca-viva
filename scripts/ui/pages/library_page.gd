@@ -142,7 +142,7 @@ func _filtered() -> Array:
 	for b in Library.books:
 		match tab:
 			1:
-				if b.last_read == 0: continue
+				if not Library.is_reading(b): continue
 			2:
 				if b.kind == "web": continue
 			3:
