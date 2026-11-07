@@ -185,30 +185,45 @@ build_exe() {
 }
 
 # --- Windows installer -----------------------------------------------------------
+# Compiles installer/Setup.cs into $1. The other arguments are files to embed, each as
+# "path,name". Without an embedded payload.zip, the program runs as the uninstaller.
+compile_setup() {
+	local out="$1" res resources=() sources=(installer/Setup.cs export/BuildInfo.cs) src
+	shift
+	if [ "$os" = windows ]; then
+		local windir; windir="$(cygpath -u "${WINDIR:-C:\\Windows}")"
+		local csc="$windir/Microsoft.NET/Framework64/v4.0.30319/csc.exe"
+		[ -f "$csc" ] || csc="$windir/Microsoft.NET/Framework/v4.0.30319/csc.exe"
+		[ -f "$csc" ] || die "C# compiler (csc.exe) not found. It ships with .NET Framework 4."
+		local fw; fw="$(cygpath -w "$(dirname "$csc")")"
+		for res in "$@"; do resources+=("-resource:$(cygpath -w "${res%,*}"),${res##*,}"); done
+		local win_sources=()
+		for src in "${sources[@]}"; do win_sources+=("$(cygpath -w "$src")"); done
+		"$csc" -nologo -target:winexe -optimize+ "-win32icon:$(cygpath -w assets/icons/icon.ico)" "-out:$(cygpath -w "$out")" \
+			${resources[@]+"${resources[@]}"} \
+			"-reference:$fw\\System.IO.Compression.dll" "-reference:$fw\\System.IO.Compression.FileSystem.dll" \
+			-reference:System.Windows.Forms.dll "${win_sources[@]}" || die "compiling $out failed"
+	else
+		# Mono builds the same .NET Framework 4.5 program as Windows' csc.
+		for res in "$@"; do resources+=("-resource:$res"); done
+		mcs -nologo -target:winexe -optimize+ -sdk:4.5 -win32icon:assets/icons/icon.ico "-out:$out" \
+			${resources[@]+"${resources[@]}"} -reference:System.IO.Compression.dll -reference:System.IO.Compression.FileSystem.dll \
+			-reference:System.Windows.Forms.dll -reference:System.Drawing.dll "${sources[@]}" || die "compiling $out failed"
+	fi
+}
+
 build_installer() {
 	want exe || build_exe
 	echo
 	echo "== Windows installer"
-	local zip=export/payload.zip setup="export/bibliotheca-viva-Setup-$version.exe" csc fw
+	local zip=export/payload.zip uninstaller=export/uninstall.exe setup="export/bibliotheca-viva-Setup-$version.exe"
 	zip_dir export/windows "$zip"
-	rm -f "$setup"
-	if [ "$os" = windows ]; then
-		local windir; windir="$(cygpath -u "${WINDIR:-C:\\Windows}")"
-		csc="$windir/Microsoft.NET/Framework64/v4.0.30319/csc.exe"
-		[ -f "$csc" ] || csc="$windir/Microsoft.NET/Framework/v4.0.30319/csc.exe"
-		[ -f "$csc" ] || die "C# compiler (csc.exe) not found. It ships with .NET Framework 4."
-		fw="$(cygpath -w "$(dirname "$csc")")"
-		"$csc" -nologo -target:winexe -optimize+ "-win32icon:$(cygpath -w assets/icons/icon.ico)" "-out:$(cygpath -w "$setup")" \
-			"-resource:$(cygpath -w "$zip"),payload.zip" \
-			"-reference:$fw\\System.IO.Compression.dll" "-reference:$fw\\System.IO.Compression.FileSystem.dll" \
-			-reference:System.Windows.Forms.dll "$(cygpath -w installer/Setup.cs)" || die "compiling the installer failed"
-	else
-		# Mono builds the same .NET Framework 4.5 program as Windows' csc.
-		mcs -nologo -target:winexe -optimize+ -sdk:4.5 -win32icon:assets/icons/icon.ico "-out:$setup" \
-			"-resource:$zip,payload.zip" -reference:System.IO.Compression.dll -reference:System.IO.Compression.FileSystem.dll \
-			-reference:System.Windows.Forms.dll -reference:System.Drawing.dll installer/Setup.cs || die "compiling the installer failed"
-	fi
-	rm -f "$zip"
+	rm -f "$setup" "$uninstaller"
+	# The version shown in Windows' list of installed apps.
+	printf 'static class BuildInfo { public const string Version = "%s"; }\n' "$version" > export/BuildInfo.cs
+	compile_setup "$uninstaller"
+	compile_setup "$setup" "$zip,payload.zip" "$uninstaller,uninstall.exe"
+	rm -f "$zip" "$uninstaller" export/BuildInfo.cs
 	built+=("$setup")
 }
 
