@@ -17,9 +17,12 @@ The library, settings and installed plugins live in the user data folder, `bibli
 One script builds every target. Run it without arguments and pick from the menu, or name the targets:
 
 ```sh
-installer/build.sh                # menu: APK (debug), APK (release), Windows EXE, Windows installer
+installer/build.sh                # menu: APK (debug), APK (release), Windows EXE, Windows installer, macOS, AppImage
 installer/build.sh exe            # export/windows/bibliotheca-viva.exe, plus the licenses
 installer/build.sh installer      # export/bibliotheca-viva-Setup-<version>.exe (Windows only)
+installer/build.sh mac            # export/bibliotheca-viva-<version>-macos.zip, the .app (on a Mac)
+installer/build.sh dmg            # export/bibliotheca-viva-<version>.dmg (on a Mac)
+installer/build.sh appimage       # export/bibliotheca-viva-<version>-x86_64.AppImage
 installer/build.sh apk            # export/android/bibliotheca-viva-<version>-debug.apk
 installer/build.sh apk --install  # same, then installs it on the connected phone (adb)
 installer/build.sh exe apk        # several at once
@@ -42,7 +45,7 @@ The app looks at this repo's GitHub releases (pre-releases included) at most onc
 
 ### App icon
 
-`assets/icon.svg` is the app icon (the same book logo as the sidebar). Godot uses it for the window and the editor; the exports need fixed-size files, which live in `assets/icons/`: `icon.ico` for the Windows exe, its window and the installer, and PNGs for the Android launcher (192 px icon, plus 432 px adaptive foreground and background layers drawn from `icon_foreground.svg` and `icon_background.svg`). After changing any of the SVGs, run `Godot --headless --path . --script installer/make_icons.gd` to render them again (errors about autoloads in its output are harmless).
+`assets/icon.svg` is the app icon (the same book logo as the sidebar). Godot uses it for the window and the editor; the exports need fixed-size files, which live in `assets/icons/`: `icon.ico` for the Windows exe, its window and the installer, PNGs for the Android launcher (192 px icon, plus 432 px adaptive foreground and background layers drawn from `icon_foreground.svg` and `icon_background.svg`), `icon_1024.png` for the macOS app (Godot turns it into an `.icns`) and `icon_256.png` for the AppImage. After changing any of the SVGs, run `Godot --headless --path . --script installer/make_icons.gd` to render them again (errors about autoloads in its output are harmless).
 
 ### Windows installer
 
@@ -53,6 +56,18 @@ Besides the files, Setup adds a Start menu shortcut and an entry in Windows' lis
 Command line: `Setup.exe "/dir=C:\some\folder" [/desktop] [/deletesetup]` installs without any window; `/deletesetup` deletes Setup.exe when it is done. `uninstall.exe /silent` uninstalls without any window and keeps the library; add `/purge` to delete it as well.
 
 The installer is compiled from `installer/Setup.cs`, twice: first without the app as `uninstall.exe`, then with the app and `uninstall.exe` embedded as Setup. On Windows the script uses the C# compiler that comes with Windows, so nothing else is needed. On macOS or Linux it uses Mono's `mcs` instead (`brew install mono`), which builds the same .NET Framework 4.5 program. Building the EXE on a Mac needs Godot's Windows export templates.
+
+### macOS
+
+`installer/build.sh mac` exports the "macOS" preset in `export_presets.cfg` (bundle id `com.alsderda.bibliotheca-viva`, universal for Apple Silicon and Intel) to `export/macos/Bibliothéca-viva.app` and zips it as `export/bibliotheca-viva-<version>-macos.zip` (with `ditto`, which keeps the bundle's signature intact). `installer/build.sh dmg` puts the app, a link to Applications and the licenses on `export/bibliotheca-viva-<version>.dmg`. Both only work on a Mac: Godot makes `.app` bundles only there, and the DMG needs `hdiutil`. You need Godot's macOS export templates.
+
+The app is signed ad-hoc (free, no Apple account), not with a Developer ID, so it isn't notarized: macOS refuses to open it the first time, and you allow it once in System Settings → Privacy & Security → Open Anyway. The script signs the app itself with `codesign`, and Godot's signing is off in the preset. The reason: Godot names the program and its `.pck` after the project, and macOS can't verify a signature over file names with an "é" in them, so the script renames both to `bibliotheca-viva` first (the program finds the `.pck` by its own name). The web view framework keeps its own signature from godot-wry. Library and settings live in `~/Library/Application Support/bibliotheca-viva`.
+
+### Linux AppImage
+
+`installer/build.sh appimage` exports the "Linux" preset (x86_64; godot-wry has no ARM Linux build) and packs it with `libgodot_wry.so`, a `.desktop` file, the icon and the licenses into `export/bibliotheca-viva-<version>-x86_64.AppImage`. An AppImage is the AppImage runtime (a small Linux program, downloaded once to `export/appimage-runtime-x86_64` from [AppImage/type2-runtime](https://github.com/AppImage/type2-runtime)) followed by a squashfs image of the app folder, so the script only needs `mksquashfs` (`squashfs-tools` on Linux, `brew install squashfs` on macOS) and works on a Mac too. You need Godot's Linux export templates.
+
+The AppImage doesn't bundle the system libraries the app uses: the Web tab needs WebKitGTK (`libwebkit2gtk-4.1`), and reading aloud needs speech-dispatcher with a voice (e.g. espeak-ng). Without WebKitGTK the rest of the app still works and the Web tab says it isn't available. Library and settings live in `~/.local/share/bibliotheca-viva`.
 
 ### Android
 

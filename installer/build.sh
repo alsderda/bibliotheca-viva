@@ -8,6 +8,9 @@
 #   installer/build.sh apk --install        # also install the APK on the connected device with adb
 #   installer/build.sh exe                  # export/windows/bibliotheca-viva.exe (+ licenses)
 #   installer/build.sh installer            # export/bibliotheca-viva-Setup-<version>.exe
+#   installer/build.sh mac                  # export/bibliotheca-viva-<version>-macos.zip (the .app; macOS only)
+#   installer/build.sh dmg                  # export/bibliotheca-viva-<version>.dmg (macOS only)
+#   installer/build.sh appimage             # export/bibliotheca-viva-<version>-x86_64.AppImage
 #   installer/build.sh exe apk              # several at once
 #
 # Needs Godot 4.7 with export templates. Godot doesn't add itself to PATH, so if
@@ -19,7 +22,8 @@
 # the C# compiler that comes with Windows, elsewhere with Mono's mcs
 # (brew install mono). The APK target also needs a
 # JDK 17 and the Android SDK; JAVA_HOME and ANDROID_HOME override the usual
-# locations. See docs/DEVELOPMENT.md.
+# locations. The AppImage target needs mksquashfs (squashfs-tools, or
+# brew install squashfs) and downloads the AppImage runtime once. See docs/DEVELOPMENT.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 root="$(pwd)"
@@ -42,10 +46,10 @@ apk_mode=debug
 install=0
 for arg in "$@"; do
 	case "$arg" in
-		apk | exe | installer) targets+=("$arg") ;;
+		apk | exe | installer | mac | dmg | appimage) targets+=("$arg") ;;
 		--release) apk_mode=release ;;
 		--install) install=1 ;;
-		-h | --help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+		-h | --help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 		*) die "unknown option: $arg (try --help)" ;;
 	esac
 done
@@ -56,6 +60,9 @@ if [ ${#targets[@]} -eq 0 ]; then
 	echo "  2) Android APK (release)"
 	echo "  3) Windows EXE"
 	echo "  4) Windows installer"
+	echo "  5) macOS app (.zip)"
+	echo "  6) macOS disk image (.dmg)"
+	echo "  7) Linux AppImage"
 	read -r -p "Numbers, separated by spaces (e.g. 1 3): " choice
 	for n in $choice; do
 		case "$n" in
@@ -63,6 +70,9 @@ if [ ${#targets[@]} -eq 0 ]; then
 			2) targets+=(apk); apk_mode=release ;;
 			3) targets+=(exe) ;;
 			4) targets+=(installer) ;;
+			5) targets+=(mac) ;;
+			6) targets+=(dmg) ;;
+			7) targets+=(appimage) ;;
 			*) die "no option $n" ;;
 		esac
 	done
@@ -76,6 +86,12 @@ want() { [[ " ${targets[*]} " == *" $1 "* ]]; }
 
 if want installer && [ "$os" != windows ] && ! command -v mcs >/dev/null; then
 	die "building the Windows installer outside Windows needs Mono's mcs (brew install mono)"
+fi
+if { want mac || want dmg; } && [ "$os" != mac ]; then
+	die "the macOS builds need a Mac (Godot only makes .app bundles there, and the DMG needs hdiutil)"
+fi
+if want appimage && ! command -v mksquashfs >/dev/null; then
+	die "the AppImage needs mksquashfs (squashfs-tools on Linux, brew install squashfs on macOS)"
 fi
 
 # --- find Godot ------------------------------------------------------------------
@@ -143,7 +159,7 @@ esac
 
 export_preset() {  # mode, preset, output file
 	"$godot" --headless --path "$(native_path "$root")" "--export-$1" "$2" "$(native_path "$root/$3")" || true
-	[ -f "$3" ] || die "Godot export of \"$2\" failed (see output above)"
+	[ -e "$3" ] || die "Godot export of \"$2\" failed (see output above)"
 }
 
 zip_dir() {  # folder, zip file
@@ -170,17 +186,22 @@ echo "Importing project..."
 
 built=()
 
+copy_licenses() {  # folder
+	mkdir -p "$1"
+	cp LICENSE "$1/bibliotheca-viva-LICENSE.txt"
+	cp assets/fonts/OFL-*.txt "$1/"
+	cp addons/godot_wry/LICENSE "$1/godot_wry-LICENSE.txt"
+}
+
 # --- Windows EXE -----------------------------------------------------------------
 build_exe() {
 	local stage=export/windows
 	echo
 	echo "== Windows EXE"
 	rm -rf "$stage"
-	mkdir -p "$stage/licenses"
+	mkdir -p "$stage"
 	export_preset release "Windows Desktop" "$stage/bibliotheca-viva.exe"
-	cp LICENSE "$stage/licenses/bibliotheca-viva-LICENSE.txt"
-	cp assets/fonts/OFL-*.txt "$stage/licenses/"
-	cp addons/godot_wry/LICENSE "$stage/licenses/godot_wry-LICENSE.txt"
+	copy_licenses "$stage/licenses"
 	built+=("$stage/bibliotheca-viva.exe")
 }
 
@@ -319,8 +340,110 @@ build_apk() {
 	fi
 }
 
+# --- macOS -----------------------------------------------------------------------
+# A universal (Apple Silicon + Intel) .app with an ad-hoc signature. Without an Apple
+# Developer ID it isn't notarized, so macOS asks once before the first launch.
+mac_app="export/macos/Bibliothéca-viva.app"
+
+build_mac_app() {
+	echo
+	echo "== macOS app"
+	rm -rf export/macos
+	mkdir -p export/macos
+	export_preset release "macOS" "$mac_app"
+	# Godot names the program and its .pck after the project ("Bibliothéca-viva"), and
+	# macOS can't verify a signature over file names with an "é" in them. Rename both
+	# (the program finds the .pck by its own name), then sign the app here; Godot's
+	# signing is off in the preset for this reason.
+	local contents="$mac_app/Contents" exe
+	exe="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$contents/Info.plist")"
+	mv "$contents/MacOS/$exe" "$contents/MacOS/bibliotheca-viva"
+	mv "$contents/Resources/$exe.pck" "$contents/Resources/bibliotheca-viva.pck"
+	/usr/libexec/PlistBuddy -c 'Set :CFBundleExecutable bibliotheca-viva' "$contents/Info.plist"
+	codesign --force --sign - "$mac_app" || die "signing the app failed"
+	codesign --verify --deep --strict "$mac_app" || die "the app's signature doesn't check out"
+}
+
+build_mac_zip() {
+	[ -d "$mac_app" ] || build_mac_app
+	local zip="export/bibliotheca-viva-$version-macos.zip"
+	rm -f "$zip"
+	# ditto keeps the bundle's symlinks and signature intact, unlike zip.
+	ditto -c -k --keepParent "$mac_app" "$zip"
+	built+=("$zip")
+}
+
+build_dmg() {
+	[ -d "$mac_app" ] || build_mac_app
+	echo
+	echo "== macOS disk image"
+	local dmgroot=export/macos/dmg dmg="export/bibliotheca-viva-$version.dmg"
+	rm -rf "$dmgroot" "$dmg"
+	mkdir -p "$dmgroot"
+	# The usual layout: drag the app onto the Applications link.
+	ditto "$mac_app" "$dmgroot/$(basename "$mac_app")"
+	ln -s /Applications "$dmgroot/Applications"
+	copy_licenses "$dmgroot/Licenses"
+	hdiutil create -quiet -volname "Bibliothéca-viva" -srcfolder "$dmgroot" -fs HFS+ -format UDZO -ov "$dmg" || die "hdiutil failed"
+	rm -rf "$dmgroot"
+	built+=("$dmg")
+}
+
+# --- Linux AppImage --------------------------------------------------------------
+# An AppImage is the AppImage runtime (a small Linux program) followed by a squashfs
+# image of the app folder; the runtime mounts the image and starts AppRun from it.
+# Building it this way needs only mksquashfs, so it works on macOS too.
+appimage_runtime_url="https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64"
+
+build_appimage() {
+	echo
+	echo "== Linux AppImage"
+	local stage=export/linux appdir=export/linux/AppDir runtime=export/appimage-runtime-x86_64
+	local out="export/bibliotheca-viva-$version-x86_64.AppImage"
+	rm -rf "$stage" "$out"
+	mkdir -p "$stage"
+	# Godot puts the web view library (libgodot_wry.so) next to the binary.
+	export_preset release "Linux" "$stage/bibliotheca-viva.x86_64"
+
+	mkdir -p "$appdir/usr/bin"
+	mv "$stage"/*.x86_64 "$stage"/*.so "$appdir/usr/bin/"
+	copy_licenses "$appdir/usr/share/licenses/bibliotheca-viva"
+	cat > "$appdir/AppRun" <<-'EOF'
+		#!/bin/sh
+		HERE="$(dirname "$(readlink -f "$0")")"
+		exec "$HERE/usr/bin/bibliotheca-viva.x86_64" "$@"
+	EOF
+	chmod +x "$appdir/AppRun" "$appdir/usr/bin/bibliotheca-viva.x86_64"
+	cat > "$appdir/bibliotheca-viva.desktop" <<-'EOF'
+		[Desktop Entry]
+		Type=Application
+		Name=Bibliothéca-viva
+		Comment=Ebook reader with text-to-speech
+		Exec=bibliotheca-viva
+		Icon=bibliotheca-viva
+		Categories=Office;
+		Terminal=false
+	EOF
+	cp assets/icons/icon_256.png "$appdir/bibliotheca-viva.png"
+	ln -s bibliotheca-viva.png "$appdir/.DirIcon"
+
+	if [ ! -s "$runtime" ]; then
+		echo "Downloading the AppImage runtime"
+		curl -fsSL -o "$runtime.part" "$appimage_runtime_url" || die "downloading $appimage_runtime_url failed"
+		mv "$runtime.part" "$runtime"
+	fi
+	mksquashfs "$appdir" "$stage/app.squashfs" -all-root -no-xattrs -noappend -comp zstd -quiet || die "mksquashfs failed"
+	cat "$runtime" "$stage/app.squashfs" > "$out"
+	chmod +x "$out"
+	rm -rf "$stage"
+	built+=("$out")
+}
+
 want exe && build_exe
 want installer && build_installer
+want mac && build_mac_zip
+want dmg && build_dmg
+want appimage && build_appimage
 want apk && build_apk
 
 echo

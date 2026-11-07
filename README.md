@@ -2,7 +2,7 @@
 
 # Bibliothéca-viva
 
-An ebook reader with text-to-speech, library sync over WebDAV, and a plugin system for fetching books from web serial sites. Built with **Godot 4.7** (GDScript, Compatibility renderer, so it targets desktop, Android, iOS and web; Windows and Android builds are set up).
+An ebook reader with text-to-speech, library sync over WebDAV, and a plugin system for fetching books from web serial sites. Built with **Godot 4.7** (GDScript, Compatibility renderer, so it targets desktop, Android, iOS and web; Windows, macOS, Linux and Android builds are set up).
 
 ![Reading aloud](docs/screenshots/01_reader_tts.png)
 
@@ -43,6 +43,15 @@ An ebook reader with text-to-speech, library sync over WebDAV, and a plugin syst
 - **Sync between devices** (Settings → Sync): keeps the library, saved chapters (including ones saved in the Web tab), covers, book details, bookmarks, reading position, text rules, site rules, saved searches, settings and installed plugins the same on all your devices, through a folder on any WebDAV server (Koofr has 10 GB free; Nextcloud works too). Syncs at start, shortly after changes, every 10 minutes and when closing. Each device only ever writes its own folder (a small index plus a file per book, so a sync only sends and fetches the books that changed), chapter files are written once and never changed, and the server's folder listing is the only index, so an interrupted sync is simply finished by the next one. When two devices change the same thing, the most recent change wins (per book, per setting); chapters saved on any device are kept. The selected voice, plugins' own settings and which saved-search results you've seen stay per device.
 - **Layout**: primary navigation in the left sidebar; secondary navigation (tabs and actions) in the top bar. Below 820 px wide, the sidebar collapses to an icon rail and the tabs move to a second row.
 
+## Install
+
+Builds are on the [releases page](https://github.com/alsderda/bibliotheca-viva/releases):
+
+- **Windows**: `bibliotheca-viva-Setup-<version>.exe`. Run it; run a newer one to update.
+- **macOS** (Apple Silicon and Intel): `bibliotheca-viva-<version>.dmg` (drag the app to Applications) or the `.app` in `bibliotheca-viva-<version>-macos.zip`. The app isn't notarized by Apple, so the first time macOS won't open it: go to System Settings → Privacy & Security and click **Open Anyway**.
+- **Linux** (x86_64): `bibliotheca-viva-<version>-x86_64.AppImage`. Make it executable (`chmod +x`) and run it. The Web tab needs WebKitGTK (`libwebkit2gtk-4.1`) and reading aloud needs speech-dispatcher; most desktop distributions have both.
+- **Android**: `bibliotheca-viva-<version>.apk`. Open it on the phone to install (allow installing from your browser or file manager when asked).
+
 ## Development
 
 Build, run and test instructions, and the layout of the code, are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
@@ -57,7 +66,8 @@ Bibliothéca-viva is provided "as is", without warranty of any kind, express or 
 
 - The Web tab is desktop-only (godot-wry doesn't support Android/iOS). It's a native layer drawn on top of the app, so app popovers can't overlap it.
 - Many sites show the app's own HTTP client a bot check. The app doesn't get around them: plugins say so and offer the Web tab, where the real browser passes the check. Bot checks depend on the site and the network.
-- Export presets exist for Windows and Android. Add others in the editor (Project → Export).
+- Export presets exist for Windows, macOS, Linux and Android. Add others in the editor (Project → Export).
+- The macOS app is signed ad-hoc, not notarized, so macOS asks once before the first launch.
 - Plugins aren't signed; the app warns before installing one.
 
 ## License
