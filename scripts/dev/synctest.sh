@@ -41,6 +41,11 @@ step synctest_a a_race_save "$DAV"
 step synctest_b b_race_between "$DAV"
 step synctest_a a_race_after "$DAV"
 step synctest_b b_race_after "$DAV"
+# a chapter gone from the server: the device lacking it asks, the one having it sends it again
+step synctest_a a_gone "$DAV"
+step synctest_b b_gone "$DAV"
+step synctest_a a_gone_fix "$DAV"
+step synctest_b b_gone_after "$DAV"
 # closing the app uploads the last change
 "$GODOT" --headless --path . -- --profile=synctest_a --synctest=a_close --dav="$DAV" --dav-user="$DAV_USER" --dav-pass="$DAV_PASS" 2>&1 | grep -E '^ +FAIL' && fail=1
 echo "  (closed a_close)"

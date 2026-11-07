@@ -363,6 +363,47 @@ func b_race_after() -> void:
 	check("chapter saved during a sync arrived", Library.has_full_chapter(race_book().id, 2), true)
 
 
+## A chapter that's gone from the server although A says it sent it: B, which
+## lacks it, asks for it in its index.json, and A sends it again.
+func a_gone() -> void:
+	var book := race_book()
+	book.chapters.append({"title": "Race 3", "url": "https://example.com/race/3", "date": 0})
+	Library.update_book(book.id, {"chapters": book.chapters})
+	Library.store_chapter(book.id, 3, "Race 3", paras("race 3"))
+	await sync()
+	var name := Sync._chapter_id_of(book.chapters[3], 3) + ".json"
+	var folder := "books/%s/" % Sync._folder_name(Library.sync_key(book))
+	check("chapter sent", name in await server_files(folder), true)
+	var dav := WebDav.new(Sync.server_url(), Sync.user_name(), Sync._password)
+	await dav.remove("bibliotheca-viva/" + folder + name)
+	check("chapter removed on the server", name in await server_files(folder), false)
+
+
+func b_gone() -> void:
+	await sync()
+	var book := race_book()
+	check("chapter isn't here", Library.has_full_chapter(book.id, 3), false)
+	check("asks for it", Sync._missing_doc().get(Library.sync_key(book), []).size(), 1)
+
+
+func a_gone_fix() -> void:
+	await sync()
+	var book := race_book()
+	var name := Sync._chapter_id_of(book.chapters[3], 3) + ".json"
+	check("chapter sent again", name in await server_files("books/%s/" % Sync._folder_name(Library.sync_key(book))), true)
+
+
+func b_gone_after() -> void:
+	await sync()
+	var book := race_book()
+	check("chapter arrived", Library.has_full_chapter(book.id, 3), true)
+	check("no longer asks for it", Sync._missing_doc().has(Library.sync_key(book)), false)
+	var before := WebDav.requests
+	await sync("quiet sync")
+	print("       requests: ", WebDav.requests - before)
+	check("quiet sync makes few requests", WebDav.requests - before < 12, true)
+
+
 ## Change something, then close the window: Sync should upload it before quitting.
 func a_close() -> void:
 	Settings.set_value("font_size", 30)

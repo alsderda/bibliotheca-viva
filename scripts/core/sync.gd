@@ -4,9 +4,11 @@ extends Node
 ##
 ## Layout inside <server address>/bibliotheca-viva/:
 ##   devices/<device id>/       one per device; only that device ever writes in it
-##     index.json               settings, text rules, plugins, removed books, and per
+##     index.json               settings, text rules, plugins, removed books, per
 ##                              book: reading position, timestamps, and the md5 of
-##                              its file below, so others fetch only changed books
+##                              its file below, so others fetch only changed books;
+##                              and `missing`: chapters other devices say are on
+##                              the server that it didn't find there
 ##     books/<hash>.json        a book's details, chapter list and bookmarks, and
 ##                              which of its chapters that device knows are in the
 ##                              book's folder below (on_server, see _flags)
@@ -33,7 +35,12 @@ extends Node
 ##     that isn't known to be on the server, or lacks one that is (known from
 ##     the folder when it was last listed, or from another device's on_server).
 ##     No timestamps: what's missing on either side is fetched or sent, and a
-##     chapter that fails is simply still missing next time
+##     chapter that fails is simply still missing next time. A device sends a
+##     chapter it has when it hasn't seen it on the server itself, whatever the
+##     others say. A chapter another device says is there but isn't (removed
+##     on the server, say) goes in `missing`; a device that has the chapter then
+##     looks at the folder again and sends it, and the entry goes once the
+##     chapter is there or no device says it is anymore
 ##   - removed books: remembered with a timestamp (tombstone); a book is removed
 ##     everywhere unless some device used it after it was removed
 ##   - text rules: the most recently changed rule list wins
@@ -76,6 +83,7 @@ var _secret_thread: Thread   # reads or saves the password (see Keyring)
 ##     with their full text, as of its text_stamp (saves opening every file)
 ##   covers: book id -> {sig, cover}: the state of its cover when it was last
 ##     found to be on both sides (see _cover_sig)
+##   missing: book id -> [chapter ids]: what goes in index.json's `missing`
 var _cache := _empty_cache()
 var _indexes := {}           # device id -> {etag, data}: other devices' index.json
 var _remote_books := {}      # device id -> {book key: data}: their book files, loaded
@@ -355,6 +363,7 @@ func _run_with(dav: WebDav, pool: Array[WebDav]) -> String:
 		if e.is_dir:
 			folders[e["name"]] = true
 	var flagged := _remote_flags(remote)
+	_take_requests(remote)
 	var all := Library.books.duplicate()
 	var known := {}
 	for i in all.size():
@@ -372,13 +381,14 @@ func _run_with(dav: WebDav, pool: Array[WebDav]) -> String:
 		if last.get("sig", "") == sig and not _chapters_differ(b, flagged.get(key, {})):
 			if last.get("cover", "") != "":
 				_cover_names[b.id] = last.cover
+			_cache.missing.erase(b.id)  # no chapter it lacks is said to be there anymore
 			continue  # every chapter is on both sides, as far as is known
 		_set_progress("Syncing books (%d of %d)…" % [i + 1, all.size()])
-		err = await _sync_book(dav, pool, b, folders, wanted, "Syncing books (%d of %d): %s" % [i + 1, all.size(), b.get("title", "")])
+		err = await _sync_book(dav, pool, b, folders, wanted, flagged.get(key, {}), "Syncing books (%d of %d): %s" % [i + 1, all.size(), b.get("title", "")])
 		if err != "":
 			return err
 		_cache.covers[b.id] = {"sig": sig, "cover": _cover_names.get(b.id, "")}
-	for part in ["covers", "server", "local"]:
+	for part in ["covers", "server", "local", "missing"]:
 		for id in _cache[part].keys():
 			if not known.has(id):
 				_cache[part].erase(id)
@@ -931,7 +941,18 @@ func _device_doc(books: Array) -> Dictionary:
 		"rules": {"modified": TextRules.modified, "list": rules},
 		"settings": settings,
 		"plugins": Plugins.sync_records(),
+		"missing": _missing_doc(),
 	}
+
+
+## Book key -> [chapter ids] for index.json's `missing` (see _take_requests).
+func _missing_doc() -> Dictionary:
+	var out := {}
+	for id in _cache.missing:
+		var b := Library.get_book(id)
+		if not b.is_empty():
+			out[Library.sync_key(b)] = _cache.missing[id]
+	return out
 
 
 ## A book's entry in index.json: what changes often, and the md5 of its book file.
@@ -974,17 +995,33 @@ static func _cover_sig(b: Dictionary, on_server: bool, wanted: Dictionary) -> St
 	return "%s|%s|%s|%s|%s" % [b.cover, b.get("cover_set", 0), wanted.get("name", ""), wanted.get("set", 0), on_server]
 
 
-## True when this device has a chapter of the book with its full text that isn't
-## known to be on the server, or lacks one that is. `flagged`: the chapter ids
-## other devices have on the server (see _remote_flags).
+## True when this device has a chapter of the book with its full text that it
+## hasn't seen on the server itself, or lacks one that's known to be there.
+## `flagged`: the chapter ids other devices have on the server (see _remote_flags).
 func _chapters_differ(b: Dictionary, flagged: Dictionary) -> bool:
 	var ids := _chapter_ids_of(b)
 	var full := _local_full(b)
 	var server: Dictionary = _cache.server.get(b.id, {})
 	for i in ids.size():
-		if full.has(i) != (server.has(ids[i]) or flagged.has(ids[i])):
+		var there := server.has(ids[i])
+		if full.has(i) != there or (not there and not full.has(i) and flagged.has(ids[i])):
 			return true
 	return false
+
+
+## Other devices' `missing`: a chapter of ours they didn't find on the server is
+## no longer counted as there, so the next check looks and sends it if it's here.
+func _take_requests(remote: Array) -> void:
+	for d in remote:
+		var m: Variant = d.get("missing")
+		if not (m is Dictionary):
+			continue
+		for key in m:
+			var b := Library.find_by_sync_key(str(key))
+			if b.is_empty() or not (m[key] is Array) or not _cache.server.has(b.id):
+				continue
+			for id in m[key]:
+				_cache.server[b.id].erase(str(id))
 
 
 ## The book's chapter ids (see _chapter_id_of), worked out again only when its
@@ -1177,7 +1214,8 @@ static func _folder_name(key: String) -> String:
 	return key.md5_text().left(20)
 
 
-func _sync_book(dav: WebDav, pool: Array[WebDav], b: Dictionary, folders: Dictionary, wanted: Dictionary, label := "") -> String:
+## `flagged`: the chapter ids other devices say are in the book's folder.
+func _sync_book(dav: WebDav, pool: Array[WebDav], b: Dictionary, folders: Dictionary, wanted: Dictionary, flagged: Dictionary, label := "") -> String:
 	var key := Library.sync_key(b)
 	var folder := FOLDER + "books/" + _folder_name(key) + "/"
 	var exists := folders.has(_folder_name(key))
@@ -1253,6 +1291,14 @@ func _sync_book(dav: WebDav, pool: Array[WebDav], b: Dictionary, folders: Dictio
 			return work.error
 		if Library.get_book(b.id).is_empty():
 			return ""
+	var missing := []  # said to be there, but aren't
+	for id in _chapter_ids_of(b):
+		if flagged.has(id) and not server.has(id):
+			missing.append(id)
+	if missing.is_empty():
+		_cache.missing.erase(b.id)
+	else:
+		_cache.missing[b.id] = missing
 
 	var cover: String = wanted.get("name", "")
 	var have_cover: bool = b.cover != "" and FileAccess.file_exists(b.cover)
@@ -1483,7 +1529,7 @@ func _collect_garbage(dav: WebDav, folders: Dictionary, remote: Array) -> void:
 # --- local state -------------------------------------------------------------
 
 static func _empty_cache() -> Dictionary:
-	return {"devices": {}, "server": {}, "local": {}, "covers": {}}
+	return {"devices": {}, "server": {}, "local": {}, "covers": {}, "missing": {}}
 
 
 func _state_path() -> String:
