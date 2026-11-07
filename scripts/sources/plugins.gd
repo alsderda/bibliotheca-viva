@@ -44,7 +44,9 @@ func _exit_tree() -> void:
 ## Stop every plugin's background work (the app is closing).
 func shutdown_all() -> void:
 	for p in plugins:
+		var t := Time.get_ticks_msec()
 		p.shutdown()
+		AppLog.info("close", "plugin %s shut down in %d ms" % [p.id, AppLog.since(t)])
 
 
 func installed_dir() -> String:

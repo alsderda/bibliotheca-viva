@@ -224,7 +224,10 @@ func sync_now(manual := false) -> String:
 	_dirty = false
 	_debounce.stop()
 	_set_progress("Syncing…")
+	var t := Time.get_ticks_msec()
+	AppLog.info("sync", "started" + (" (by hand)" if manual else ""))
 	var err := await _run()
+	AppLog.info("sync", ("done in %d ms" if err == "" else "failed after %d ms: ") % AppLog.since(t) + err)
 	running = false
 	last_error = err
 	if err == "":
@@ -262,8 +265,12 @@ func _finish_and_quit() -> void:
 		return
 	_closing = true
 	if _dirty or running:
-		get_tree().create_timer(CLOSE_WAIT).timeout.connect(get_tree().quit)
+		AppLog.info("close", "syncing changes first (waits at most %d s)" % CLOSE_WAIT)
+		get_tree().create_timer(CLOSE_WAIT).timeout.connect(func():
+			AppLog.info("close", "sync took too long, quitting anyway")
+			get_tree().quit())
 		await sync_now()
+	AppLog.info("close", "sync finished, quitting")
 	get_tree().quit()
 
 
@@ -1483,7 +1490,9 @@ func _in_secret_thread(job: Callable) -> Variant:
 
 func _exit_tree() -> void:
 	if _secret_thread != null:
+		var t := Time.get_ticks_msec()
 		_secret_thread.wait_to_finish()
+		AppLog.info("close", "password thread finished in %d ms" % AppLog.since(t))
 
 
 ## In a thread. Reads the keyring first, then the fallback file, and moves a

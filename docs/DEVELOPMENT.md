@@ -12,6 +12,10 @@ To work on plugins, clone their repositories into `plugins/` (git-ignored). The 
 
 The library, settings and installed plugins live in the user data folder, `bibliotheca-viva` (set by `config/custom_user_dir_name` in `project.godot`): `%APPDATA%\bibliotheca-viva` on Windows, `~/Library/Application Support/bibliotheca-viva` on macOS, `~/.local/share/bibliotheca-viva` (or `$XDG_DATA_HOME`) on Linux, and the app's private storage on Android. Settings → About shows the exact path.
 
+### Logs
+
+Settings → About → Troubleshooting → "Keep a log" (off by default, per device, also in release builds) writes a log file per start of the app to `logs/` in the profile's data folder, keeping the last 5. It holds everything Godot prints (errors and warnings too, with GDScript backtraces when available), each line stamped with the time since start, plus steps the app notes with `AppLog.info(area, text)`: closing (how long each part took), sync runs, web and WebDAV requests (without query strings or passwords) and page changes. The same section exports all kept logs as one text file, with the app version and device at the top, or copies that text to the clipboard. On Android, Copy is replaced by Share…, which opens the system share menu with the file (mail, chat apps, Files, Drive), since the clipboard can't hold long logs; that's the small Java plugin in `addons/android_share`, which uses the FileProvider Godot's Android library already declares. `scripts/core/app_log.gd` has the code; `AppLog.info` does nothing while logging is off, so it's cheap to call.
+
 ### Building
 
 One script builds every target. Run it without arguments and pick from the menu, or name the targets:
@@ -80,11 +84,12 @@ sdkmanager --sdk_root=$HOME/Library/Android/sdk "platform-tools" "build-tools;36
 
 The script finds the JDK and SDK in the usual places (or `JAVA_HOME`, `ANDROID_HOME`) and fills in Godot's Editor Settings → Export → Android paths if they're empty. Debug builds are signed with the standard Android debug key (`~/.android/debug.keystore`, created if missing), which is fine for sideloading: copy the APK to the phone and open it, or use `--install` with USB debugging on.
 
-The export is a Gradle build so that `addons/android_speech` and `addons/android_keystore` can add to it:
+The export is a Gradle build so that `addons/android_speech`, `addons/android_keystore` and `addons/android_share` can add to it:
 
 - a `<queries>` entry for `TTS_SERVICE`. Without it, Android 11+ hides third-party TTS engines (RHVoice, eSpeak, …) from the app and silently falls back to Google TTS.
 - a small Java plugin (`addons/android_speech/java`, copied into the build at export) that plays the speech itself from a foreground service. Godot's main loop stops while the app is in the background, so `scripts/core/speech.gd` hands the plugin everything it should read, with the pauses, in advance.
 - another Java plugin (`addons/android_keystore/java`) that encrypts the sync password with an AES key kept in the Android Keystore, for `scripts/core/keyring.gd`.
+- a third Java plugin (`addons/android_share/java`) that opens Android's share menu for a file the app wrote (the exported logs), through Godot's own FileProvider.
 
 The script installs Godot's Android build template into `android/` (git-ignored) on the first run and again when Godot's version changes. The first build downloads Gradle and its dependencies, so it needs internet and takes a few minutes.
 

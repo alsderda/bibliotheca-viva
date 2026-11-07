@@ -209,13 +209,17 @@ func _ready() -> void:
 
 
 func _exit_tree() -> void:
+	var t := Time.get_ticks_msec()
 	if _pid > 0:
 		OS.kill(_pid)
 		_pid = -1
 	if _pipe:
 		_pipe.close()
+	AppLog.info("close", "Windows voice helper stopped in %d ms" % AppLog.since(t))
 	if _thread and _thread.is_started():
+		t = Time.get_ticks_msec()
 		_thread.wait_to_finish()
+		AppLog.info("close", "Windows voice reader thread finished in %d ms" % AppLog.since(t))
 
 
 func is_broken() -> bool:

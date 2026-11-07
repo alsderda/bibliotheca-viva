@@ -44,12 +44,16 @@ func _ready() -> void:
 
 
 func _exit_tree() -> void:
+	var t := Time.get_ticks_msec()
 	flush()
+	AppLog.info("close", "library saved in %d ms" % AppLog.since(t))
 
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_CLOSE_REQUEST:
+		var t := Time.get_ticks_msec()
 		flush()  # Android may stop the app any time after pausing it
+		AppLog.info("library", "saved in %d ms" % AppLog.since(t))
 
 
 # --- queries -----------------------------------------------------------------
