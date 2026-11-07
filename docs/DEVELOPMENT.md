@@ -44,9 +44,13 @@ The Android build and the Windows file properties pick up the version name from 
 
 ### Windows installer
 
-`installer/build.sh installer` exports the app (preset "Windows Desktop" in `export_presets.cfg`), adds the licenses, and writes `export/bibliotheca-viva-Setup-<version>.exe`, a single-file installer. It asks for a folder, unpacks the app there, and overwrites older files, so you update by running a newer installer on the same folder. Library and settings live in the user data folder (`%APPDATA%\bibliotheca-viva`), so updating doesn't touch them. `Setup.exe "/dir=C:\some\folder"` installs without any window.
+`installer/build.sh installer` exports the app (preset "Windows Desktop" in `export_presets.cfg`), adds the licenses, and writes `export/bibliotheca-viva-Setup-<version>.exe`, a single-file installer. It asks for a folder (by default `%LOCALAPPDATA%\Programs\Bibliothéca-viva`, or the folder of an existing install) and whether to add a desktop shortcut, unpacks the app there and overwrites older files, so you update by running a newer installer. Library and settings live in the user data folder (`%APPDATA%\bibliotheca-viva`), so updating doesn't touch them. Everything is per user, so no admin rights are needed.
 
-The installer is compiled from `installer/Setup.cs`. On Windows the script uses the C# compiler that comes with Windows, so nothing else is needed. On macOS or Linux it uses Mono's `mcs` instead (`brew install mono`), which builds the same .NET Framework 4.5 program. Building the EXE on a Mac needs Godot's Windows export templates.
+Besides the files, Setup adds a Start menu shortcut and an entry in Windows' list of installed apps (Settings → Apps, under `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\bibliotheca-viva`) with the version from `config/version`. It also puts `uninstall.exe` next to the app, plus `uninstall.files`, the list of files it unpacked. The uninstaller deletes only those files (and the WebView2 cache next to the exe), the shortcuts and the registry entry, then the folder if it's empty, so installing into a folder that holds other things is safe. It asks whether to delete the library and settings too.
+
+Command line: `Setup.exe "/dir=C:\some\folder" [/desktop]` installs without any window. `uninstall.exe /silent` uninstalls without any window and keeps the library; add `/purge` to delete it as well.
+
+The installer is compiled from `installer/Setup.cs`, twice: first without the app as `uninstall.exe`, then with the app and `uninstall.exe` embedded as Setup. On Windows the script uses the C# compiler that comes with Windows, so nothing else is needed. On macOS or Linux it uses Mono's `mcs` instead (`brew install mono`), which builds the same .NET Framework 4.5 program. Building the EXE on a Mac needs Godot's Windows export templates.
 
 ### Android
 
