@@ -796,7 +796,7 @@ func _about() -> void:
 	_section("Bibliothéca-viva %s" % ProjectSettings.get_setting("application/config/version", "?"), [
 		UI.label("Build %s" % ProjectSettings.get_setting("application/config/version_code", "?"), "Small"),
 		UI.label("An ebook reader with text-to-speech, library sync over WebDAV, and a plugin system for fetching books from web serial sites. Built with Godot %s." % Engine.get_version_info().string, "Muted", true),
-		_row("Source code", "Code, issues and releases on GitHub.", _external_link("GitHub", "https://github.com/alsderda/bibliotheca-viva")),
+		_row("Source code", "Code, issues and releases on GitHub.", _external_link("GitHub", "https://github.com/alsderda/bibliotheca-viva", "")),
 		_row("Data folder", ProjectSettings.globalize_path(Settings.data_dir()), UI.button("Open", "external", "", func(): OS.shell_open(ProjectSettings.globalize_path(Settings.data_dir())))),
 	])
 	_troubleshooting()
@@ -875,7 +875,8 @@ const CREDITS := [
 
 
 ## A link button that always opens in the system browser, never the built-in one.
-func _external_link(text: String, url: String) -> Button:
-	var b := UI.button(text, "external", "GhostButton", func(): OS.shell_open(url))
+## Ghost style by default; pass "" for a normal button.
+func _external_link(text: String, url: String, variation := "GhostButton") -> Button:
+	var b := UI.button(text, "external", variation, func(): OS.shell_open(url))
 	b.tooltip_text = url
 	return b
