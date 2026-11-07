@@ -511,6 +511,7 @@ func _save_current(announce: bool) -> void:
 		paras = PackedStringArray(info.paragraphs.map(func(p): return str(p.t)))
 	Library.store_chapter(book.id, idx, title, paras)
 	Library.set_progress(book.id, idx, 0)
+	Library.set_dropped(book.id, false)  # reading it in the Web tab picks it up again
 	if announce:
 		_set_status("check", UiTheme.GOOD, "Saved “%s” to %s" % [title, book.title])
 

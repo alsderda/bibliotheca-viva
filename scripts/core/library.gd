@@ -15,6 +15,7 @@ extends Node
 ##   chapters: [{title, url, date, words}] (words: set once the chapter's full text is saved), progress: {chapter, paragraph}, added, last_read, last_checked,
 ##   modified (last local change to anything but progress and bookmarks), sync_key (see Sync),
 ##   text_stamp (unix time chapter text was last saved or moved, see Sync),
+##   dropped (true: the reader gave up on it; cleared when it's opened again, see set_dropped),
 ##   bookmarks: [{id, chapter, paragraph, name, text, created, modified, deleted}] (see add_bookmark)
 
 signal changed
@@ -101,10 +102,11 @@ static func book_key(url: String) -> String:
 	return url.to_lower().replace("https://", "").replace("http://", "").replace("www.", "").trim_suffix("/")
 
 
+## The most recently read book that isn't dropped.
 func last_read() -> Dictionary:
 	var best := {}
 	for b in books:
-		if b.get("last_read", 0) > 0 and (best.is_empty() or b.last_read > best.last_read):
+		if b.get("last_read", 0) > 0 and not b.get("dropped", false) and (best.is_empty() or b.last_read > best.last_read):
 			best = b
 	return best
 
@@ -114,6 +116,17 @@ func progress_ratio(book: Dictionary) -> float:
 	if n == 0:
 		return 0.0
 	return clampf(float(book.progress.chapter + 1) / n, 0.0, 1.0) if book.get("last_read", 0) > 0 else 0.0
+
+
+## Read up to the last chapter (a serial with new chapters is no longer finished).
+func is_finished(book: Dictionary) -> bool:
+	var n: int = book.get("chapters", []).size()
+	return n > 0 and book.get("last_read", 0) > 0 and book.progress.chapter >= n - 1
+
+
+## Started, not finished and not dropped: what the library's Reading tab shows.
+func is_reading(book: Dictionary) -> bool:
+	return book.get("last_read", 0) > 0 and not book.get("dropped", false) and not is_finished(book)
 
 
 # --- mutations ---------------------------------------------------------------
@@ -171,6 +184,13 @@ func set_progress(id: String, chapter: int, paragraph: int) -> void:
 	b.last_read = Time.get_unix_time_from_system()
 	save_index()
 	progress_changed.emit(id)
+
+
+## A dropped book leaves the Reading tab until it's opened again.
+func set_dropped(id: String, dropped: bool) -> void:
+	var b := get_book(id)
+	if not b.is_empty() and b.get("dropped", false) != dropped:
+		update_book(id, {"dropped": dropped})
 
 
 # --- bookmarks ---------------------------------------------------------------
