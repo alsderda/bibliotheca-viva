@@ -846,8 +846,16 @@ func _rebuild_topbar() -> void:
 			sc.add_child(tabs_row)
 			sc.custom_minimum_size.y = 48
 			tabs_row.add_theme_constant_override("separation", 18)
+			# Tighter padding on phones. Every state needs it: a button is sized
+			# for its normal box, so a selected tab with wider padding clips its label.
 			for b in tabs_row.get_children():
-				b.add_theme_stylebox_override("normal", UiTheme.box(Color.TRANSPARENT, 0, Color.TRANSPARENT, 0, Vector4(2, 10, 2, 10)))
+				for state in ["normal", "hover", "pressed", "hover_pressed"]:
+					var sb: StyleBoxFlat = b.get_theme_stylebox(state).duplicate()
+					sb.content_margin_left = 2
+					sb.content_margin_right = 2
+					sb.content_margin_top = 10
+					sb.content_margin_bottom = 10
+					b.add_theme_stylebox_override(state, sb)
 			_top_rows.add_child(sc)
 		# A lone menu button up there looks lost, so the title joins it. With a
 		# back button (e.g. an open book) the buttons fill the strip well enough.
