@@ -547,6 +547,21 @@ func _on_resize() -> void:
 
 # --- safe area (Android camera hole and system bars) -------------------------
 
+# Android brings the on-screen keyboard back when the app returns from the
+# background, even when no text field is being edited. Hide it then, and once
+# more a moment later, since Android may show it after we get the event.
+func _hide_stray_keyboard() -> void:
+	if not OS.has_feature("mobile"):
+		return
+	for wait in [0.0, 0.3]:
+		if wait > 0.0:
+			await get_tree().create_timer(wait).timeout
+		var f := get_viewport().gui_get_focus_owner()
+		if (f is LineEdit or f is TextEdit) and f.is_visible_in_tree():
+			return  # the user is typing: keep the keyboard
+		DisplayServer.virtual_keyboard_hide()
+
+
 func _update_safe_area(force := false) -> void:
 	var insets := Vector4.ZERO
 	var cutouts: Array[Rect2] = []
@@ -916,6 +931,9 @@ func _notification(what: int) -> void:
 			get_tree().quit()
 	elif what == NOTIFICATION_APPLICATION_RESUMED:
 		_update_safe_area()
+		_hide_stray_keyboard()
+	elif what == NOTIFICATION_APPLICATION_FOCUS_IN:
+		_hide_stray_keyboard()
 	elif what == NOTIFICATION_WM_CLOSE_REQUEST:
 		var t := Time.get_ticks_msec()
 		Speech.stop()
