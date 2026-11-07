@@ -196,6 +196,7 @@ func navigate(key: String) -> void:
 		current.on_hidden()
 		current.hide()
 	current = page
+	AppLog.info("ui", "page " + key)
 	page.show()
 	var nav := page.nav_key() if page.nav_key() != "" else key
 	if _nav_buttons.has(nav):
@@ -900,5 +901,7 @@ func _notification(what: int) -> void:
 	elif what == NOTIFICATION_APPLICATION_RESUMED:
 		_update_safe_area()
 	elif what == NOTIFICATION_WM_CLOSE_REQUEST:
+		var t := Time.get_ticks_msec()
 		Speech.stop()
+		AppLog.info("close", "speech stopped in %d ms" % AppLog.since(t))
 		Plugins.shutdown_all()

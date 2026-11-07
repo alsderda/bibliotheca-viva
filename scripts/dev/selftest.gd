@@ -14,6 +14,7 @@ func _ready() -> void:
 	_sites()
 	_versions()
 	_sync_password()
+	_app_log()
 	await _word_counts()
 	await _fetch_manager()
 	await _pacing()
@@ -50,6 +51,26 @@ func check(name: String, got: Variant, want: Variant) -> void:
 	else:
 		failures += 1
 		print("  FAIL ", name, "\n       got:  ", got, "\n       want: ", want)
+
+
+func _app_log() -> void:
+	check("logging is off by default", Settings.DEFAULTS.logging, false)
+	Settings.set_value("logging", true)
+	check("logging turns on", AppLog.is_on(), true)
+	print("selftest log line")
+	push_warning("selftest log warning")
+	AppLog.info("selftest", "noted step")
+	var text := AppLog.export_text()
+	check("log keeps printed lines", text.contains("selftest log line"), true)
+	check("log keeps warnings", text.contains("WARNING: selftest log warning"), true)
+	check("log keeps noted steps", text.contains("[selftest] noted step"), true)
+	check("log names the version", text.contains(str(ProjectSettings.get_setting("application/config/version"))), true)
+	Settings.set_value("logging", false)
+	check("logging turns off", AppLog.is_on(), false)
+	print("after logging off")
+	check("nothing is logged while off", AppLog.export_text().contains("after logging off"), false)
+	AppLog.clear()
+	check("logs can be deleted", AppLog.files().size(), 0)
 
 
 func _versions() -> void:

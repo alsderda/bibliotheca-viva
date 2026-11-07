@@ -120,7 +120,9 @@ func request(method: String, path: String, body := PackedByteArray(), headers :=
 	var wait := BUSY_WAIT_FIRST
 	for attempt in busy_retries + 1:
 		await _pace()
+		var t := Time.get_ticks_msec()
 		var r := await _request_once(method, path, body, headers)
+		AppLog.info("webdav", "%s %s -> %s, %d ms" % [method, path, r.code if r.code > 0 else r.get("error", "?"), AppLog.since(t)])
 		if not r.code in [429, 503]:
 			_slowdown = maxf(_slowdown * 0.95 - 0.005, 0.0)
 			return r

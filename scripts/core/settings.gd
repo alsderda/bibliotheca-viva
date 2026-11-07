@@ -41,11 +41,12 @@ const DEFAULTS := {
 	"plugins_off": [],              # ids of plugins switched off
 	"plugin_repos": [],             # plugin repository links (see Plugins)
 	"plugin_settings": {},          # plugin id -> its own settings (see SourcePlugin.get_setting)
+	"logging": false,               # keep a log file to help find problems (see AppLog)
 }
 
 ## Settings that only make sense on one device, so Sync leaves them alone.
-## (Voice ids differ between operating systems.)
-const LOCAL_ONLY := ["tts_voice", "web_last_url", "plugin_settings"]
+## (Voice ids differ between operating systems; a log is for the device with the problem.)
+const LOCAL_ONLY := ["tts_voice", "web_last_url", "plugin_settings", "logging"]
 
 const READER_THEMES := {
 	"dark": {"bg": Color("#121418"), "text": Color("#d8dbe0"), "muted": Color("#8a919c"), "highlight": Color(0.35, 0.55, 1.0, 0.18)},

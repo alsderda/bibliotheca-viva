@@ -11,6 +11,7 @@ var _margin: MarginContainer
 var _sync_status: Label
 var _sync_devices: VBoxContainer
 var _folder_dialog: FileDialog
+var _log_dialog: FileDialog
 var _repo_lists := {}   # repo link -> what it lists (cached while the app runs)
 
 
@@ -797,6 +798,7 @@ func _about() -> void:
 		UI.label("An ebook reader with text-to-speech, library sync over WebDAV, and a plugin system for fetching books from web serial sites. Built with Godot %s." % Engine.get_version_info().string, "Muted", true),
 		_row("Data folder", ProjectSettings.globalize_path(Settings.data_dir()), UI.button("Open", "external", "", func(): OS.shell_open(ProjectSettings.globalize_path(Settings.data_dir())))),
 	])
+	_troubleshooting()
 	var rows: Array = [UI.label("Third-party software and assets the reader uses. Sites come from plugins, which carry their own licenses.", "Muted", true)]
 	for c in CREDITS:
 		var links := UI.hbox(8, [
@@ -805,6 +807,48 @@ func _about() -> void:
 		])
 		rows.append(_row(c.name, c.what, links))
 	_section("Credits", rows)
+
+
+func _troubleshooting() -> void:
+	var on := CheckButton.new()
+	on.button_pressed = AppLog.is_on()
+	on.focus_mode = Control.FOCUS_NONE
+	on.toggled.connect(func(v): Settings.set_value("logging", v); _rebuild_keep_scroll())
+	var count := AppLog.files().size()
+	var kept := "No logs kept." if count == 0 else "%d %s kept, %s." % [count, "log" if count == 1 else "logs", String.humanize_size(AppLog.total_bytes())]
+	var actions := _chip_row()
+	actions.add_child(UI.button("Export…", "download", "", _export_log))
+	actions.add_child(UI.button("Copy", "copy", "", func():
+		DisplayServer.clipboard_set(AppLog.export_text())
+		main.toast("Logs copied to the clipboard", "ok")))
+	if OS.has_feature("pc"):
+		actions.add_child(UI.button("Open folder", "external", "", func(): OS.shell_open(ProjectSettings.globalize_path(AppLog.folder()))))
+	actions.add_child(UI.button("Delete", "trash", "GhostButton", func():
+		AppLog.clear()
+		main.toast("Old logs deleted", "ok")
+		_rebuild_keep_scroll()))
+	for b in actions.get_children():
+		(b as Button).disabled = count == 0
+	_section("Troubleshooting", [
+		_row("Keep a log", "Writes what the app does, with the time, to a file on this device: errors, closing, sync and downloads. Nothing is sent anywhere. Each start makes a new log, and the last %d are kept." % AppLog.KEEP_FILES, on),
+		UI.label(kept + " Export or copy them to attach to a bug report.", "Small", true),
+		actions,
+	])
+
+
+func _export_log() -> void:
+	if _log_dialog == null:
+		_log_dialog = FileDialog.new()
+		_log_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
+		_log_dialog.access = FileDialog.ACCESS_FILESYSTEM
+		_log_dialog.use_native_dialog = true
+		_log_dialog.filters = PackedStringArray(["*.txt ; Text files"])
+		_log_dialog.file_selected.connect(func(path):
+			var ok := AppLog.export_to(path)
+			main.toast("Logs saved to " + path.get_file() if ok else "Couldn't save the logs there", "ok" if ok else "error"))
+		add_child(_log_dialog)
+	_log_dialog.current_file = "bibliotheca-viva-log-%s.txt" % Time.get_date_string_from_system()
+	_log_dialog.popup_centered_ratio(0.6)
 
 
 ## Third-party parts the reader itself uses (plugins list their own).

@@ -12,6 +12,10 @@ To work on plugins, clone their repositories into `plugins/` (git-ignored). The 
 
 The library, settings and installed plugins live in the user data folder, `bibliotheca-viva` (set by `config/custom_user_dir_name` in `project.godot`): `%APPDATA%\bibliotheca-viva` on Windows, `~/Library/Application Support/bibliotheca-viva` on macOS, `~/.local/share/bibliotheca-viva` (or `$XDG_DATA_HOME`) on Linux, and the app's private storage on Android. Settings → About shows the exact path.
 
+### Logs
+
+Settings → About → Troubleshooting → "Keep a log" (off by default, per device, also in release builds) writes a log file per start of the app to `logs/` in the profile's data folder, keeping the last 5. It holds everything Godot prints (errors and warnings too, with GDScript backtraces when available), each line stamped with the time since start, plus steps the app notes with `AppLog.info(area, text)`: closing (how long each part took), sync runs, web and WebDAV requests (without query strings or passwords) and page changes. The same section exports or copies all kept logs as one text file, with the app version and device at the top. `scripts/core/app_log.gd` has the code; `AppLog.info` does nothing while logging is off, so it's cheap to call.
+
 ### Building
 
 One script builds every target. Run it without arguments and pick from the menu, or name the targets:

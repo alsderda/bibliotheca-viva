@@ -271,14 +271,19 @@ func _send(url: String, headers: PackedStringArray, timeout: float, method: int,
 	add_child(http)
 	var all_headers := PackedStringArray(["User-Agent: " + user_agent, "Accept-Language: en-US,en;q=0.8"])
 	all_headers.append_array(headers)
+	var t := Time.get_ticks_msec()
 	var err := http.request(url, all_headers, method, body)
 	if err != OK:
 		http.queue_free()
+		AppLog.info("net", "%s couldn't start (%s)" % [url.get_slice("?", 0), error_string(err)])
 		return {"ok": false, "code": 0, "body": PackedByteArray(), "headers": PackedStringArray(), "error": "Could not start request (%s)" % error_string(err)}
 	var res: Array = await http.request_completed
 	http.queue_free()
 	var result: int = res[0]
 	var code: int = res[1]
+	if AppLog.is_on():  # without the query, which can hold search words or keys
+		AppLog.info("net", "%s -> %s, %d bytes, %d ms" % [url.get_slice("?", 0),
+			code if result == HTTPRequest.RESULT_SUCCESS else _result_text(result), (res[3] as PackedByteArray).size(), AppLog.since(t)])
 	if result != HTTPRequest.RESULT_SUCCESS:
 		return {"ok": false, "code": code, "body": res[3], "headers": res[2], "error": _result_text(result), "result": result}
 	return {"ok": code >= 200 and code < 300, "code": code, "body": res[3], "headers": res[2], "error": "" if code < 300 else "HTTP %d" % code}
