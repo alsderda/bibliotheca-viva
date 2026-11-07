@@ -12,6 +12,7 @@ func _ready() -> void:
 	_sentences()
 	_book_search()
 	_sites()
+	_versions()
 	await _word_counts()
 	await _fetch_manager()
 	await _pacing()
@@ -48,6 +49,16 @@ func check(name: String, got: Variant, want: Variant) -> void:
 	else:
 		failures += 1
 		print("  FAIL ", name, "\n       got:  ", got, "\n       want: ", want)
+
+
+func _versions() -> void:
+	var n := func(a, b): return UpdateCheck.newer(a, b)
+	check("v0.3.0 is newer than 0.2.6", n.call("v0.3.0", "0.2.6"), true)
+	check("0.2.10 is newer than 0.2.9", n.call("0.2.10", "0.2.9"), true)
+	check("v0.2.6 is not newer than 0.2.6", n.call("v0.2.6", "0.2.6"), false)
+	check("v0.2.0 is not newer than 0.2.6", n.call("v0.2.0", "0.2.6"), false)
+	check("1.0 is newer than 0.9.9", n.call("1.0", "0.9.9"), true)
+	check("v0.3.0-beta counts as 0.3.0", n.call("v0.3.0-beta", "0.2.9"), true)
 
 
 func _book_search() -> void:

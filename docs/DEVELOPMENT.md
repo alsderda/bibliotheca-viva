@@ -38,6 +38,8 @@ A GitHub check (`.github/workflows/version-check.yml`) enforces this: a PR that 
 
 The Android build and the Windows file properties pick up the version name from `project.godot` (their own fields in the presets are left empty). Settings → About shows both.
 
+The app looks at this repo's GitHub releases (pre-releases included) at most once every four hours (`scripts/core/update_check.gd`). If one has a higher version than `config/version`, a notice above Settings in the sidebar opens its release page. So tag each release `v<config/version>` of the build it ships.
+
 ### App icon
 
 `assets/icon.svg` is the app icon (the same book logo as the sidebar). Godot uses it for the window and the editor; the exports need fixed-size files, which live in `assets/icons/`: `icon.ico` for the Windows exe, its window and the installer, and PNGs for the Android launcher (192 px icon, plus 432 px adaptive foreground and background layers drawn from `icon_foreground.svg` and `icon_background.svg`). After changing any of the SVGs, run `Godot --headless --path . --script installer/make_icons.gd` to render them again (errors about autoloads in its output are harmless).
