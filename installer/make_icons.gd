@@ -9,6 +9,8 @@ const ICO_SIZES := [16, 20, 24, 32, 40, 48, 64, 128, 256]
 func _init() -> void:
 	var ok := true
 	ok = _png("res://assets/icon.svg", 192, "res://assets/icons/icon_192.png") and ok
+	ok = _png("res://assets/icon.svg", 256, "res://assets/icons/icon_256.png") and ok
+	ok = _png("res://assets/icon.svg", 1024, "res://assets/icons/icon_1024.png") and ok
 	ok = _png("res://assets/icons/icon_foreground.svg", 432, "res://assets/icons/icon_foreground_432.png") and ok
 	ok = _png("res://assets/icons/icon_background.svg", 432, "res://assets/icons/icon_background_432.png") and ok
 	ok = _ico("res://assets/icon.svg", "res://assets/icons/icon.ico") and ok
