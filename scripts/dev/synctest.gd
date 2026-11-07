@@ -310,6 +310,59 @@ func b_old() -> void:
 	check("all 30 old chapters", n, 30)
 
 
+func race_book() -> Dictionary:
+	for b in Library.books:
+		if b.title == "Race Book":
+			return b
+	return {}
+
+
+## A chapter saved while a sync is running, after its book was synced (or when
+## the app is closed during a download) goes up with a later sync. A device that
+## syncs in between, and finds nothing new then, must still get it afterwards.
+func a_race() -> void:
+	var chapters := []
+	for i in 3:
+		chapters.append({"title": "Race %d" % i, "url": "https://example.com/race/%d" % i, "date": 0})
+	var book := Library.add_book({"title": "Race Book", "source": "web", "url": "https://example.com/race", "chapters": chapters})
+	Library.store_chapter(book.id, 0, "Race 0", paras("race 0"))
+	Library.store_chapter(book.id, 1, "Race 1", paras("race 1"))
+	await sync()
+
+
+func b_race() -> void:
+	await sync()
+	await sync("second sync")  # nothing new: the book's check is remembered
+	var book := race_book()
+	check("race book arrived", [Library.has_full_chapter(book.id, 0), Library.has_full_chapter(book.id, 1)], [true, true])
+
+
+func a_race_save() -> void:
+	var result := {}
+	var run := func(): result.err = await Sync.sync_now()
+	run.call()
+	while Sync.progress_text != "Saving…" and Sync.running:
+		await get_tree().process_frame
+	check("still syncing when the chapter is saved", Sync.running, true)
+	Library.store_chapter(race_book().id, 2, "Race 2", paras("race 2"))
+	while Sync.running:
+		await get_tree().process_frame
+	check("sync during the save has no error", result.get("err"), "")
+
+
+func b_race_between() -> void:
+	await sync()
+
+
+func a_race_after() -> void:
+	await sync()
+
+
+func b_race_after() -> void:
+	await sync()
+	check("chapter saved during a sync arrived", Library.has_full_chapter(race_book().id, 2), true)
+
+
 ## Change something, then close the window: Sync should upload it before quitting.
 func a_close() -> void:
 	Settings.set_value("font_size", 30)

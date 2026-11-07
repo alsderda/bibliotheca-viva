@@ -7,7 +7,9 @@ extends Node
 ##     index.json               settings, text rules, plugins, removed books, and per
 ##                              book: reading position, timestamps, and the md5 of
 ##                              its file below, so others fetch only changed books
-##     books/<hash>.json        a book's details, chapter list and bookmarks
+##     books/<hash>.json        a book's details, chapter list and bookmarks, and
+##                              which of its chapters that device knows are in the
+##                              book's folder below (on_server, see _flags)
 ##   books/<hash of book key>/  one folder per book
 ##     <chapter id>.json        chapter text; written once, never changed
 ##     pack-<md5>.json.gz       many chapters' text in one gzipped file, for when a
@@ -27,6 +29,11 @@ extends Node
 ##   - reading position: the most recently read version wins
 ##   - chapter lists: combined, so chapters saved on either device are kept
 ##     (an imported book's list only grows at the end: the longest one wins)
+##   - chapter text: a book's folder is looked at when this device has a chapter
+##     that isn't known to be on the server, or lacks one that is (known from
+##     the folder when it was last listed, or from another device's on_server).
+##     No timestamps: what's missing on either side is fetched or sent, and a
+##     chapter that fails is simply still missing next time
 ##   - removed books: remembered with a timestamp (tombstone); a book is removed
 ##     everywhere unless some device used it after it was removed
 ##   - text rules: the most recently changed rule list wins
@@ -63,15 +70,21 @@ var _password_ready := false  # false until it's been read from where it's kept
 var _secret_thread: Thread   # reads or saves the password (see Keyring)
 ## Kept in sync_cache.json; the other devices' book files are kept in sync_devices/.
 ##   devices: device id -> {book key: md5 of its book file as cached}
-##   texts: book id -> {sig, cover}: the state of its chapters and cover when
-##     they were last found to be on both sides (see _texts_sig)
-var _cache := {"devices": {}, "texts": {}}
+##   server: book id -> {chapter id: true}: its chapters known to be in its
+##     server folder (listed there, or sent or fetched by this device)
+##   local: book id -> {stamp, full: [chapter indexes]}: its chapters saved here
+##     with their full text, as of its text_stamp (saves opening every file)
+##   covers: book id -> {sig, cover}: the state of its cover when it was last
+##     found to be on both sides (see _cover_sig)
+var _cache := _empty_cache()
 var _indexes := {}           # device id -> {etag, data}: other devices' index.json
 var _remote_books := {}      # device id -> {book key: data}: their book files, loaded
-var _md5s := {}              # book id -> [revision, cover, md5] of this device's book file
+var _md5s := {}              # book id -> [revision, cover, on_server flags, md5] of this device's book file
 var _done := {}              # book id -> {chapter file name: true} known to be on both sides
 var _cover_names := {}       # book id -> remote cover file name
 var _pack_ids := {}          # server path of a pack's .ids.json -> its chapter ids (packs never change)
+var _ids := {}               # book id -> {list, size, ids}: its chapter ids, while its chapter list stays the same
+var _flagged := {}           # "<device id>|<book key>" -> [md5 of the book file, {chapter id: true} it has on_server]
 var _dirty := false
 var _again := false
 var _applying := false
@@ -167,8 +180,9 @@ func configure(url: String, user: String, password: String) -> void:
 	if url != "" and not url.ends_with("/"):
 		url += "/"
 	if url != _state.get("url", "") or user != _state.get("user", ""):
-		_cache = {"devices": {}, "texts": {}}
+		_cache = _empty_cache()
 		_indexes.clear()
+		_flagged.clear()
 		_remote_books.clear()
 		_remove_tree(_remote_dir())
 		_done.clear()
@@ -340,7 +354,7 @@ func _run_with(dav: WebDav, pool: Array[WebDav]) -> String:
 	for e in books_listing.entries:
 		if e.is_dir:
 			folders[e["name"]] = true
-	var texts := _remote_texts(remote)
+	var flagged := _remote_flags(remote)
 	var all := Library.books.duplicate()
 	var known := {}
 	for i in all.size():
@@ -350,20 +364,27 @@ func _run_with(dav: WebDav, pool: Array[WebDav]) -> String:
 		known[b.id] = true
 		var key := Library.sync_key(b)
 		var wanted: Dictionary = covers.get(key, {})
-		var sig := _texts_sig(b, folders.has(_folder_name(key)), wanted, texts.get(key, ""))
-		var last: Dictionary = _cache.texts.get(b.id, {})
-		if last.get("sig", "") == sig:
+		var exists := folders.has(_folder_name(key))
+		if not exists:
+			_cache.server.erase(b.id)  # its folder is gone (or never was): nothing of it is there
+		var sig := _cover_sig(b, exists, wanted)
+		var last: Dictionary = _cache.covers.get(b.id, {})
+		if last.get("sig", "") == sig and not _chapters_differ(b, flagged.get(key, {})):
 			if last.get("cover", "") != "":
 				_cover_names[b.id] = last.cover
-			continue  # nothing new on either side since it was last checked
+			continue  # every chapter is on both sides, as far as is known
 		_set_progress("Syncing books (%d of %d)…" % [i + 1, all.size()])
 		err = await _sync_book(dav, pool, b, folders, wanted, "Syncing books (%d of %d): %s" % [i + 1, all.size(), b.get("title", "")])
 		if err != "":
 			return err
-		_cache.texts[b.id] = {"sig": sig, "cover": _cover_names.get(b.id, "")}
-	for id in _cache.texts.keys():
+		_cache.covers[b.id] = {"sig": sig, "cover": _cover_names.get(b.id, "")}
+	for part in ["covers", "server", "local"]:
+		for id in _cache[part].keys():
+			if not known.has(id):
+				_cache[part].erase(id)
+	for id in _ids.keys():
 		if not known.has(id):
-			_cache.texts.erase(id)
+			_ids.erase(id)
 
 	await _collect_garbage(dav, folders, remote)
 
@@ -518,15 +539,16 @@ func _upload_own(dav: WebDav, pool: Array[WebDav]) -> String:
 		names[name] = true
 		var cover: String = _cover_names.get(b.id, "")
 		var rev: int = Library.revisions.get(b.id, 0)
+		var flags := _flags(b)
 		var md5 := ""
 		var cached: Array = _md5s.get(b.id, [])
-		if cached.size() == 3 and cached[0] == rev and cached[1] == cover:
-			md5 = cached[2]
+		if cached.size() == 4 and cached[0] == rev and cached[1] == cover and cached[2] == flags:
+			md5 = cached[3]
 		var body := ""
 		if md5 == "" or md5 != uploaded.get(key, "") or not on_server.has(name):
-			body = JSON.stringify(_book_file(b))
+			body = JSON.stringify(_book_file(b, flags))
 			md5 = body.md5_text()
-			_md5s[b.id] = [rev, cover, md5]
+			_md5s[b.id] = [rev, cover, flags, md5]
 		if md5 != uploaded.get(key, "") or not on_server.has(name):
 			jobs.append({"key": key, "path": base + "books/" + name, "body": body, "md5": md5})
 		entries.append(_index_entry(b, key, md5))
@@ -913,7 +935,8 @@ func _device_doc(books: Array) -> Dictionary:
 
 
 ## A book's entry in index.json: what changes often, and the md5 of its book file.
-## `texts` tells other devices it has new chapter text (see _texts_sig).
+## `texts` is only for older versions, which look at a book's folder when it
+## changes (this one goes by on_server, see _chapters_differ).
 static func _index_entry(b: Dictionary, key: String, md5: String) -> Dictionary:
 	var p: Dictionary = b.progress
 	var at: int = p.chapter
@@ -924,13 +947,14 @@ static func _index_entry(b: Dictionary, key: String, md5: String) -> Dictionary:
 
 
 ## A book's file in devices/<id>/books/: everything but what's in its index entry.
-func _book_file(b: Dictionary) -> Dictionary:
+## `flags`: from _flags.
+func _book_file(b: Dictionary, flags: String) -> Dictionary:
 	var out := {
 		"key": Library.sync_key(b), "title": b.title, "author": b.author, "kind": b.kind, "source": b.source,
 		"url": b.url, "cover_url": b.cover_url, "synopsis": b.synopsis, "tags": b.tags, "extra": b.get("extra", {}),
 		"rss_only": b.get("rss_only", false), "added": b.added, "last_checked": b.last_checked,
 		"chapters": _clean_chapters(b.chapters),
-		"cover": _cover_names.get(b.id, ""), "cover_set": b.get("cover_set", 0),
+		"cover": _cover_names.get(b.id, ""), "cover_set": b.get("cover_set", 0), "on_server": flags,
 		"bookmarks": b.get("bookmarks", []).map(func(m):
 			var c: int = m.chapter
 			return m.merged({"chapter_id": _chapter_id_of(b.chapters[c], c) if c < b.chapters.size() else ""})),
@@ -942,30 +966,104 @@ func _book_file(b: Dictionary) -> Dictionary:
 	return out
 
 
-## Book key -> the other devices' text stamps for it, as one string.
-static func _remote_texts(remote: Array) -> Dictionary:
-	var lists := {}
-	for d in remote:
-		for e in d.books:
-			if e is Dictionary and e.has("key"):
-				if not lists.has(e.key):
-					lists[e.key] = []
-				lists[e.key].append(str(e.get("texts", 0)))
+## Sums up what decides whether a book's cover needs syncing: its cover here,
+## the cover wanted, and whether its server folder exists. When it's the same as
+## after the last check, and no chapter is missing on either side, nothing has to
+## be listed or sent for the book.
+static func _cover_sig(b: Dictionary, on_server: bool, wanted: Dictionary) -> String:
+	return "%s|%s|%s|%s|%s" % [b.cover, b.get("cover_set", 0), wanted.get("name", ""), wanted.get("set", 0), on_server]
+
+
+## True when this device has a chapter of the book with its full text that isn't
+## known to be on the server, or lacks one that is. `flagged`: the chapter ids
+## other devices have on the server (see _remote_flags).
+func _chapters_differ(b: Dictionary, flagged: Dictionary) -> bool:
+	var ids := _chapter_ids_of(b)
+	var full := _local_full(b)
+	var server: Dictionary = _cache.server.get(b.id, {})
+	for i in ids.size():
+		if full.has(i) != (server.has(ids[i]) or flagged.has(ids[i])):
+			return true
+	return false
+
+
+## The book's chapter ids (see _chapter_id_of), worked out again only when its
+## chapter list has changed.
+func _chapter_ids_of(b: Dictionary) -> Array:
+	var c: Dictionary = _ids.get(b.id, {})
+	if c.is_empty() or not is_same(c.list, b.chapters) or c.size != b.chapters.size():
+		c = {"list": b.chapters, "size": b.chapters.size(), "ids": _chapter_ids(b.chapters)}
+		_ids[b.id] = c
+	return c.ids
+
+
+## {chapter index: true} for the book's chapters saved here with their full text.
+## Kept until its text_stamp changes, which every save of chapter text does.
+func _local_full(b: Dictionary) -> Dictionary:
+	var stamp := str(b.get("text_stamp", 0))
+	var c: Variant = _cache.local.get(b.id)
+	var full := {}
+	if c is Dictionary and c.get("stamp") == stamp and c.get("full") is Array:
+		for i in c.full:
+			full[int(i)] = true
+		return full
+	var dir := DirAccess.open(Library.book_dir(b.id))
+	if dir:
+		for f in dir.get_files():
+			var i := f.get_basename().to_int() if f.ends_with(".json") and f.get_basename().is_valid_int() else -1
+			if i >= 0 and i < b.chapters.size() and Library.has_full_chapter(b.id, i):
+				full[i] = true
+	_cache.local[b.id] = {"stamp": stamp, "full": full.keys()}
+	return full
+
+
+## A book's on_server for its book file: one bit per chapter of its list, set
+## when the chapter is known to be in the book's server folder; base64.
+func _flags(b: Dictionary) -> String:
+	var server: Dictionary = _cache.server.get(b.id, {})
+	if server.is_empty():
+		return ""
+	var ids := _chapter_ids_of(b)
+	var bits := PackedByteArray()
+	bits.resize(ceili(ids.size() / 8.0))  # filled with zeros
+	for i in ids.size():
+		if server.has(ids[i]):
+			bits[i >> 3] |= 1 << (i & 7)
+	return Marshalls.raw_to_base64(bits)
+
+
+## Book key -> {chapter id: true}: the chapters the other devices know are on the
+## server, from the on_server of their book files.
+func _remote_flags(remote: Array) -> Dictionary:
 	var out := {}
-	for k in lists:
-		lists[k].sort()
-		out[k] = ",".join(lists[k])
+	for d in remote:
+		var info: Variant = d.get("device")
+		var dev: String = str(info.get("id", "")) if info is Dictionary else ""
+		for e in d.books:
+			if not (e is Dictionary and e.get("key") is String and e.get("on_server") is String and e.on_server != ""):
+				continue
+			var at := "%s|%s" % [dev, e.key]
+			var c: Array = _flagged.get(at, [])
+			if c.is_empty() or c[0] != e.get("md5", ""):
+				c = [e.get("md5", ""), _flagged_ids(e)]
+				_flagged[at] = c
+			if not out.has(e.key):
+				out[e.key] = {}
+			out[e.key].merge(c[1])
 	return out
 
 
-## Sums up what decides whether a book's chapters and cover need syncing: its
-## chapter text and list here, its cover, the cover wanted, and the other devices'
-## chapter text. When it's the same as after the last check, nothing has to be
-## listed or sent for the book. ("p": checked since packs exist, so every book's
-## folder is looked at once after the update, and its chapters packed; see _sync_book.)
-static func _texts_sig(b: Dictionary, on_server: bool, wanted: Dictionary, remote_texts: String) -> String:
-	return "p|%s|%d|%s|%s|%s|%s|%s|%s" % [b.get("text_stamp", 0), b.chapters.size(), b.cover, b.get("cover_set", 0),
-		wanted.get("name", ""), wanted.get("set", 0), remote_texts, on_server]
+## The ids of the chapters set in a book file's on_server.
+static func _flagged_ids(e: Dictionary) -> Dictionary:
+	var bits := Marshalls.base64_to_raw(e.on_server)
+	var list: Variant = e.get("chapters", [])
+	var out := {}
+	if not list is Array:
+		return out
+	for i in mini(list.size(), bits.size() * 8):
+		if bits[i >> 3] & (1 << (i & 7)) and list[i] is Dictionary:
+			out[_chapter_id_of(list[i], i)] = true
+	return out
 
 
 # --- plugins -----------------------------------------------------------------
@@ -1103,6 +1201,13 @@ func _sync_book(dav: WebDav, pool: Array[WebDav], b: Dictionary, folders: Dictio
 	for p in packs:
 		for name in packs[p]:
 			in_pack[name] = p
+	var server := {}  # chapter ids in the folder, as listed
+	for n in remote:
+		if n.ends_with(".json") and not n.begins_with("pack-") and int(remote[n]) > 0:
+			server[n.get_basename()] = true
+	for name in in_pack:
+		server[name.get_basename()] = true
+	_cache.server[b.id] = server
 
 	# work out what to send and fetch, then do it over several connections
 	var downs := []  # chapter file names
@@ -1142,6 +1247,8 @@ func _sync_book(dav: WebDav, pool: Array[WebDav], b: Dictionary, folders: Dictio
 			_chapter_worker(d, work)
 		while work.running > 0:
 			await get_tree().process_frame
+		for name in done:  # sent or fetched (also when a job failed after others)
+			server[name.get_basename()] = true
 		if work.error != "":
 			return work.error
 		if Library.get_book(b.id).is_empty():
@@ -1375,6 +1482,10 @@ func _collect_garbage(dav: WebDav, folders: Dictionary, remote: Array) -> void:
 
 # --- local state -------------------------------------------------------------
 
+static func _empty_cache() -> Dictionary:
+	return {"devices": {}, "server": {}, "local": {}, "covers": {}}
+
+
 func _state_path() -> String:
 	return Settings.data_dir() + "/sync.json"
 
@@ -1427,8 +1538,11 @@ func _load_state() -> void:
 		_state.device_name = _default_device_name()
 	last_sync = float(_state.get("last_sync", 0))
 	var cache: Variant = JSON.parse_string(FileAccess.get_file_as_string(_cache_path())) if FileAccess.file_exists(_cache_path()) else null
-	if cache is Dictionary and cache.get("devices") is Dictionary and cache.get("texts") is Dictionary:
-		_cache = cache
+	_cache = _empty_cache()
+	if cache is Dictionary and cache.get("devices") is Dictionary:
+		for part in _cache:
+			if cache.get(part) is Dictionary:
+				_cache[part] = cache[part]
 	else:
 		_remove_tree(_remote_dir())
 	_save_state()
