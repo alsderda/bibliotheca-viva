@@ -778,6 +778,13 @@ func close_drawer(animate := true) -> void:
 func _rebuild_topbar() -> void:
 	if current == null:
 		return
+	# A page may reuse a control in the new bar (the library's filter box), so
+	# give focus back to it afterwards: typing there mustn't stop mid-word.
+	var focus := get_viewport().gui_get_focus_owner()
+	if focus and not _top_rows.is_ancestor_of(focus):
+		focus = null
+	if focus:
+		_refocus.call_deferred(focus)
 	UI.clear(_top_rows)
 	_top_listen = null
 	var row := UI.hbox(14)
@@ -890,6 +897,11 @@ func _rebuild_topbar() -> void:
 		_top_rows.add_child(row)
 		_place_top_row(row, title_ctl)
 	_refresh_listening()
+
+
+func _refocus(c) -> void:  # untyped: it may be freed by now
+	if is_instance_valid(c) and c.is_inside_tree() and c.is_visible_in_tree():
+		c.grab_focus()
 
 
 func _unhandled_input(event: InputEvent) -> void:

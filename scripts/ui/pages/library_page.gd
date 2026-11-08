@@ -20,6 +20,9 @@ var _menu_book := ""
 var _file_dialog: FileDialog
 var _dirty := true
 var _rebuild_queued := false
+## The top bar's filter box. Kept across top bar rebuilds (a sync or plugin
+## change can rebuild it while you type), so it doesn't lose focus.
+var _search: LineEdit
 
 
 func _ready() -> void:
@@ -61,14 +64,7 @@ func tabs() -> PackedStringArray:
 
 func build_actions(bar: HBoxContainer) -> void:
 	if not compact:
-		var search := LineEdit.new()
-		search.theme_type_variation = "SearchField"
-		search.placeholder_text = "Filter books"
-		search.custom_minimum_size.x = 220
-		search.text = _filter_text
-		search.right_icon = Icons.get_icon("search", UiTheme.FAINT, 18)
-		search.text_changed.connect(func(t): _filter_text = t; _rebuild())
-		bar.add_child(search)
+		bar.add_child(_search_field())
 		bar.add_child(UI.button("Import", "import", "", import_dialog))
 		bar.add_child(UI.button("Add web novel", "plus", "PrimaryButton", func(): main.pages.browse.tab = 0; main.navigate("browse")))
 	else:
@@ -78,6 +74,21 @@ func build_actions(bar: HBoxContainer) -> void:
 		bar.add_child(f)
 		bar.add_child(UI.icon_button("import", "Import ebook", import_dialog))
 		bar.add_child(UI.icon_button("plus", "Add web novel", func(): main.navigate("browse")))
+
+
+func _search_field() -> LineEdit:
+	if _search == null:
+		_search = LineEdit.new()
+		_search.theme_type_variation = "SearchField"
+		_search.placeholder_text = "Filter books"
+		_search.custom_minimum_size.x = 220
+		_search.right_icon = Icons.get_icon("search", UiTheme.FAINT, 18)
+		_search.text_changed.connect(func(t): _filter_text = t; _rebuild())
+	if _search.text != _filter_text:
+		_search.text = _filter_text
+	if _search.get_parent():
+		_search.get_parent().remove_child(_search)
+	return _search
 
 
 func on_shown() -> void:
