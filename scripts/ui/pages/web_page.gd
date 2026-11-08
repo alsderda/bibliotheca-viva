@@ -62,7 +62,7 @@ func _ready() -> void:
 	Speech.sleep_triggered.connect(func(): if Speech.source_owner == "web": _eval("window.__sr && __sr.clear()"))
 	Settings.changed.connect(func(k): if k == "tts_rate": _update_player())
 	SavedSearches.changed.connect(func(): if info.has("listing"): _refresh_toolbar())
-	Plugins.changed.connect(func(): header_changed.emit())  # the sites menu in the title
+	Plugins.changed.connect(func(): if visible: header_changed.emit())  # the sites menu in the title
 	Settings.changed.connect(func(k): if k == "site_rules": _eval(WebExtract.script()))  # read the page again with the new rules
 
 
