@@ -113,6 +113,7 @@ func _sites() -> void:
 	check("library filter matches list", sp.library_filter_matches({"extra": {"genre": ["a", "b"]}}, "genre", "b"), true)
 	check("library filter without extra", sp.library_filter_matches({}, "status", "completed"), false)
 	_epub_matching()
+	_epub_only_chapters()
 	_series_parts()
 	check("tags cleaned from text", Library.clean_tags(" Fantasy, litrpg ,, fantasy,  Slow   burn "), ["Fantasy", "litrpg", "Slow burn"])
 	check("tags cleaned from a list", Library.clean_tags(["A", "", "a", "B"]), ["A", "B"])
@@ -155,6 +156,32 @@ func _epub_matching() -> void:
 	var by_numbered := Library.match_epub_chapters(numbered, [{"title": "Chapter 2", "url": ""}, {"title": "Start", "url": ""},
 		{"title": "Chapter 3", "url": ""}, {"title": "chapter 4", "url": ""}, {"title": "Chapter 5", "url": ""}])
 	check("epub chapters match numbered titles and placeholder titles", by_numbered.map(func(p): return p[0]), [1, 0, 2, 3])
+
+
+## Chapters a site took down (still in an older EPUB) are added in their place.
+func _epub_only_chapters() -> void:
+	var long := "A paragraph long enough to tell this chapter apart from every other chapter in the book, number %d."  # 2 repeats 4's
+	var b := Library.add_book({"title": "Stub test", "kind": "web", "url": "https://example.com/stub",
+		"chapters": [{"title": "1 - Start", "url": "https://example.com/s/1"}, {"title": "4 - After", "url": "https://example.com/s/4"},
+		{"title": "5 - Later", "url": "https://example.com/s/5"}]})
+	Library.store_chapter(b.id, 1, "4 - After", PackedStringArray([long % 4]))
+	Library.set_progress(b.id, 1, 3)
+	var epub := {"chapters": [{"title": "Intro Page", "paragraphs": [long % 9]}, {"title": "0 - Prologue", "paragraphs": [long % 0]},
+		{"title": "1 - Start", "paragraphs": [long % 1]}, {"title": "Volume 1", "paragraphs": ["Volume 1"]},
+		{"title": "2 - Gone", "paragraphs": [long % 4]}, {"title": "3 - After", "paragraphs": [long % 3]},
+		{"title": "4 - After", "paragraphs": [long % 4]}, {"title": "5 - Later (renamed)", "paragraphs": [long % 5]}]}
+	var r := Library.fill_from_epub(b.id, epub)
+	check("epub-only chapters added", [r.filled, r.matched, r.added], [1, 2, 3])
+	b = Library.get_book(b.id)
+	check("epub-only chapters in their place", b.chapters.map(func(c): return c.title), ["0 - Prologue", "1 - Start", "2 - Gone", "3 - After", "4 - After", "5 - Later"])
+	check("epub-only chapters get a made-up link", b.chapters.map(func(c): return Library.is_epub_only(c)), [true, false, true, true, false, false])
+	check("epub-only chapter text saved", Library.load_chapter(b.id, 3).paragraphs, [long % 3])
+	check("chapter repeating a later one's passage added", Library.load_chapter(b.id, 2).paragraphs, [long % 4])
+	check("downloaded chapter moved along", Library.load_chapter(b.id, 4).paragraphs, [long % 4])
+	check("reading position moved along", b.progress, {"chapter": 4, "paragraph": 3})
+	r = Library.fill_from_epub(b.id, epub)
+	check("same epub again adds nothing", [r.filled, r.added, b.chapters.size()], [0, 0, 6])
+	Library.remove_book(b.id, false)
 
 
 ## A later EPUB of an imported serial (c486-496 after c1-485) adds only its new chapters.
