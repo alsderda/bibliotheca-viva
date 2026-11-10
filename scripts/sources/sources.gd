@@ -98,6 +98,8 @@ func load_chapter(book: Dictionary, index: int, background := false) -> Dictiona
 	if book.kind != "web":
 		return {"error": "Chapter %d is missing from this book." % (index + 1)}
 	var ch: Dictionary = book.chapters[index]
+	if Library.is_epub_only(ch):
+		return {"error": "This chapter came from an EPUB and isn't on the site any more. Add the EPUB to this book again to get it back."}
 	if book.source == "web":
 		if not cached.is_empty():
 			return cached

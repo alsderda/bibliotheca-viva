@@ -649,7 +649,8 @@ func new_chapters_for(id: String, parsed: Dictionary) -> Array:
 ## book adds only what comes after. A chapter is already there when one has
 ## - its chapter number (see number_key; not one that several chapters have,
 ##   like "Chapter 207 (1/2)" and "(2/2)"),
-## - or the same text (its longest paragraph, ignoring punctuation),
+## - or the same text (its longest paragraph, ignoring punctuation) and not
+##   another chapter number (a later chapter can repeat a passage),
 ## - or, for a short page without much text, the same title.
 ## `series`: the book's title as _title_key(series_title()), see number_key.
 static func unseen_chapters(have: Array, have_text: Array, chapters: Array, series := "") -> Array:
@@ -663,14 +664,14 @@ static func unseen_chapters(have: Array, have_text: Array, chapters: Array, seri
 		titles[_title_key(have[i].title)] = true
 		var fp := _fingerprint(have_text[i] if i < have_text.size() else [])
 		if fp != "":
-			prints[fp] = true
+			prints[fp] = n
 	var out := []
 	for c in chapters:
 		var n := number_key(c.title, series)
 		var fp := _fingerprint(c.paragraphs)
 		if n != "" and numbers.get(n, 0) == 1:
 			continue
-		if fp != "" and prints.has(fp):
+		if fp != "" and prints.has(fp) and (n == "" or prints[fp] == "" or prints[fp] == n):
 			continue
 		if fp == "" and titles.has(_title_key(c.title)):
 			continue
@@ -738,30 +739,113 @@ static func _epub_book_url(epub: Dictionary) -> String:
 ## Fills a web book's missing chapters from an EPUB of the same book (e.g. one
 ## made by WebToEpub), read with read_epub_for. Chapters are matched by their
 ## link when the EPUB has one, otherwise by title. Downloaded chapters are left
-## alone; RSS previews are replaced. -> {filled, matched}
+## alone; RSS previews are replaced. Chapters the site no longer lists (taken
+## down, or stubbed for a published book) are added in their place, see
+## _add_epub_only_chapters. -> {filled, matched, added}
 func fill_from_epub(id: String, epub: Dictionary) -> Dictionary:
 	var b := get_book(id)
 	if b.is_empty():
-		return {"filled": 0, "matched": 0}
-	var pairs: Array = match_epub_chapters(b, epub.chapters)
+		return {"filled": 0, "matched": 0, "added": 0}
+	var at := _epub_match_indexes(b, epub.chapters)
 	var filled := 0
-	for pair in pairs:
-		var i: int = pair[0]
+	var matched := 0
+	for k in at.size():
+		var i: int = at[k]
+		if i < 0:
+			continue
+		matched += 1
 		if not has_full_chapter(id, i):
-			store_chapter(id, i, b.chapters[i].title, pair[1].paragraphs)
+			store_chapter(id, i, b.chapters[i].title, epub.chapters[k].paragraphs)
 			filled += 1
-	if filled > 0:
+	# with nothing matched, the EPUB may well be of another book
+	var added := _add_epub_only_chapters(id, epub.chapters, at) if matched > 0 else 0
+	if filled > 0 and added == 0:
 		book_changed.emit(id)
 		changed.emit()
-	return {"filled": filled, "matched": pairs.size()}
+	return {"filled": filled, "matched": matched, "added": added}
+
+
+## Adds the EPUB chapters that matched none of a web book's chapters (`at`, see
+## _epub_match_indexes) and that it doesn't have under another title either (see
+## unseen_chapters), each right after the chapter before it in the EPUB, or
+## first if none is. Pages before the first matched chapter (a title page, the
+## book's description) are left out unless they have a chapter number, and so
+## are short pages without a number ("Volume 2"). Their link is the EPUB's, or
+## else one made up from the title (see is_epub_only), so Sync and later
+## refreshes know them. -> how many
+func _add_epub_only_chapters(id: String, epub_chapters: Array, at: Array) -> int:
+	var b := get_book(id)
+	var texts := []
+	for i in b.chapters.size():
+		texts.append(load_chapter(id, i).get("paragraphs", []))
+	var unmatched := []
+	var seen_match := false
+	for k in at.size():
+		var c: Dictionary = epub_chapters[k]
+		seen_match = seen_match or at[k] >= 0
+		var numbered := number_key(c.title) != ""
+		if at[k] < 0 and (numbered or (seen_match and _fingerprint(c.paragraphs) != "")):
+			unmatched.append(c)
+	var fresh := unseen_chapters(b.chapters, texts, unmatched, _title_key(series_title(b.title)))
+	if fresh.is_empty():
+		return 0
+	var list: Array = b.chapters.duplicate()  # the same dictionaries, so files and progress follow them
+	var urls := {}
+	for c in list:
+		urls[chapter_key(c.url)] = true
+	var added := []  # [chapter entry, paragraphs]
+	var last := -1  # where the previous EPUB chapter is in `list`
+	for k in at.size():
+		if at[k] >= 0:
+			var orig: Dictionary = b.chapters[at[k]]
+			last = list.find_custom(func(c): return is_same(c, orig))
+		elif fresh.any(func(c): return is_same(c, epub_chapters[k])):
+			var c: Dictionary = epub_chapters[k]
+			var url: String = c.get("url", "")
+			if url == "" or urls.has(chapter_key(url)):
+				var base := "epub:" + (_title_key(c.title) if _title_key(c.title) != "" else "chapter")
+				url = base
+				var n := 2
+				while urls.has(chapter_key(url)):
+					url = "%s-%d" % [base, n]
+					n += 1
+			urls[chapter_key(url)] = true
+			var entry := {"title": c.title, "url": url, "date": 0}
+			last += 1
+			list.insert(last, entry)
+			added.append([entry, c.paragraphs])
+	var rss_only: bool = b.get("rss_only", false)
+	replace_chapters(id, list)
+	b.rss_only = rss_only  # replace_chapters clears it
+	for a in added:
+		store_chapter(id, b.chapters.find_custom(func(c): return is_same(c, a[0])), a[0].title, PackedStringArray(a[1]))
+	return added.size()
+
+
+## True for a chapter added from an EPUB with no link of its own (see
+## _add_epub_only_chapters): it can't be downloaded again.
+static func is_epub_only(chapter: Dictionary) -> bool:
+	return str(chapter.get("url", "")).begins_with("epub:")
 
 
 ## Pairs EPUB chapters with a book's chapters: -> [[book index, epub chapter]].
+## See _epub_match_indexes.
+static func match_epub_chapters(book: Dictionary, epub_chapters: Array) -> Array:
+	var at := _epub_match_indexes(book, epub_chapters)
+	var pairs := []
+	for k in at.size():
+		if at[k] >= 0:
+			pairs.append([at[k], epub_chapters[k]])
+	return pairs
+
+
+## For each EPUB chapter, the index of the book's chapter it is, or -1.
 ## By link where the EPUB chapter has one; by title (ignoring case, punctuation
 ## and a leading chapter number like "12. ") where it doesn't and exactly one
-## chapter has that title. An EPUB chapter titled only "Chapter 12" (a title the
-## tool that made it didn't know) matches the one chapter numbered 12.
-static func match_epub_chapters(book: Dictionary, epub_chapters: Array) -> Array:
+## chapter has that title, unless the two start with different chapter numbers.
+## An EPUB chapter titled only "Chapter 12" (a title the tool that made it didn't
+## know) matches the one chapter numbered 12.
+static func _epub_match_indexes(book: Dictionary, epub_chapters: Array) -> Array:
 	var by_key := {}
 	var by_title := {}
 	var by_number := {}
@@ -774,7 +858,7 @@ static func match_epub_chapters(book: Dictionary, epub_chapters: Array) -> Array
 		var n := HtmlText._re("(?i)^\\s*(?:chapter\\s+)?(\\d+)(?!\\d)").search(ch.title)
 		if n:
 			by_number[n.get_string(1).to_int()] = -1 if by_number.has(n.get_string(1).to_int()) else i
-	var pairs := []
+	var out := []
 	var used := {}
 	for c in epub_chapters:
 		var i: int = -1
@@ -782,13 +866,24 @@ static func match_epub_chapters(book: Dictionary, epub_chapters: Array) -> Array
 			i = by_key.get(chapter_key(c.url), -1)
 		else:
 			i = by_title.get(_title_key(c.title), -1)
+			if i >= 0 and _numbers_differ(c.title, book.chapters[i].title):
+				i = -1  # "30 - Home" isn't "167 - Home"
 			var placeholder := HtmlText._re("(?i)^\\s*chapter\\s+(\\d+)\\s*$").search(c.title)
 			if i < 0 and placeholder:
 				i = by_number.get(placeholder.get_string(1).to_int(), -1)
-		if i >= 0 and not used.has(i):
+		if i >= 0 and used.has(i):
+			i = -1
+		if i >= 0:
 			used[i] = true
-			pairs.append([i, c])
-	return pairs
+		out.append(i)
+	return out
+
+
+## True when both titles start with a chapter number and they aren't the same.
+static func _numbers_differ(a: String, b: String) -> bool:
+	var x := number_key(a)
+	var y := number_key(b)
+	return x != "" and y != "" and x != y
 
 
 static func _title_key(title: String) -> String:

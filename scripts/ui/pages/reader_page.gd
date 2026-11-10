@@ -1247,10 +1247,12 @@ func _fill_from_epub(path: String) -> void:
 		_build_details()
 	if r.matched == 0:
 		main.toast("None of the EPUB's chapters are in this book", "warn")
-	elif r.filled == 0:
+	elif r.filled == 0 and r.added == 0:
 		main.toast("All %d chapter(s) the EPUB has are already downloaded" % r.matched, "ok")
-	else:
+	elif r.added == 0:
 		main.toast("Added %d chapter(s) from the EPUB" % r.filled, "ok")
+	else:
+		main.toast("Added %d chapter(s) from the EPUB, %d of them no longer on the site" % [r.filled + r.added, r.added], "ok")
 
 
 ## 950, 8.4k, 84k, 1.2M
