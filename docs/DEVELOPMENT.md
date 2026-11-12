@@ -8,6 +8,8 @@ How to run, build and test Bibliothéca-viva from source, and where its code liv
 godot --path .            # or open project.godot in the Godot editor
 ```
 
+On Linux, use the official Godot build from godotengine.org, not a distribution's `godot` package. Arch's (and CachyOS's) exports its own copy of libstdc++'s `std::call_once` internals, which WebKitGTK then calls into, so the app crashes as soon as the Web tab's web view starts. Exported builds use the official export templates and don't have this problem.
+
 To work on plugins, clone their repositories into `plugins/` (git-ignored). The app loads every folder with a `plugin.json` up to two levels down, so a single plugin and a repository of several both work. Exported builds leave `plugins/` out.
 
 The library, settings and installed plugins live in the user data folder, `bibliotheca-viva` (set by `config/custom_user_dir_name` in `project.godot`): `%APPDATA%\bibliotheca-viva` on Windows, `~/Library/Application Support/bibliotheca-viva` on macOS, `~/.local/share/bibliotheca-viva` (or `$XDG_DATA_HOME`) on Linux, and the app's private storage on Android. Settings → About shows the exact path.
@@ -27,6 +29,7 @@ installer/build.sh installer      # export/bibliotheca-viva-Setup-<version>.exe 
 installer/build.sh mac            # export/bibliotheca-viva-<version>-macos.zip, the .app (on a Mac)
 installer/build.sh dmg            # export/bibliotheca-viva-<version>.dmg (on a Mac)
 installer/build.sh appimage       # export/bibliotheca-viva-<version>-x86_64.AppImage
+installer/build.sh appimage --install  # same, then installs it for you (Linux)
 installer/build.sh apk            # export/android/bibliotheca-viva-<version>-debug.apk
 installer/build.sh apk --install  # same, then installs it on the connected phone (adb)
 installer/build.sh exe apk        # several at once
@@ -71,7 +74,17 @@ The app is signed ad-hoc (free, no Apple account), not with a Developer ID, so i
 
 `installer/build.sh appimage` exports the "Linux" preset (x86_64; godot-wry has no ARM Linux build) and packs it with `libgodot_wry.so`, a `.desktop` file, the icon and the licenses into `export/bibliotheca-viva-<version>-x86_64.AppImage`. An AppImage is the AppImage runtime (a small Linux program, downloaded once to `export/appimage-runtime-x86_64` from [AppImage/type2-runtime](https://github.com/AppImage/type2-runtime)) followed by a squashfs image of the app folder, so the script only needs `mksquashfs` (`squashfs-tools` on Linux, `brew install squashfs` on macOS) and works on a Mac too. You need Godot's Linux export templates.
 
-The AppImage doesn't bundle the system libraries the app uses: the Web tab needs WebKitGTK (`libwebkit2gtk-4.1`), and reading aloud needs speech-dispatcher with a voice (e.g. espeak-ng). Without WebKitGTK the rest of the app still works and the Web tab says it isn't available. Library and settings live in `~/.local/share/bibliotheca-viva`.
+The AppImage doesn't bundle the system libraries the app uses: the Web tab needs WebKitGTK (`libwebkit2gtk-4.1`), reading aloud needs speech-dispatcher with a voice (e.g. espeak-ng), and keeping the sync password in the system keyring needs `secret-tool` (libsecret). Without WebKitGTK the rest of the app still works and the Web tab says it isn't available. Running the AppImage needs FUSE (`fusermount3` or `fusermount`), which desktop distributions have. Library and settings live in `~/.local/share/bibliotheca-viva`.
+
+`--install` (Linux only) copies the AppImage to `~/.local/bin/bibliotheca-viva`, puts an entry in the app menu (`~/.local/share/applications/bibliotheca-viva.desktop`) and the icon in `~/.local/share/icons/hicolor`. Run it again to update; a copy that's still open keeps running from the old file.
+
+The web view on Linux works like this, and each part is needed:
+
+- godot-wry places WebKitGTK as a child window inside Godot's window, which only works with X11. So `project.godot` sets the display driver to X11 on Linux (`display/display_server/driver.linuxbsd`); on a Wayland desktop the app runs through XWayland.
+- GTK must use X11 as well, so `web_page.gd` sets `GDK_BACKEND=x11` before the web view starts GTK.
+- It also sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` (unless you set it yourself), because WebKitGTK's DMA-BUF renderer draws a black page with NVIDIA's driver.
+- GTK sets the C locale from the environment when it starts. With a locale such as `de_DE` for numbers, Godot then writes floats with a decimal comma and every JSON file the app saves is broken. So `web_page.gd` sets `LC_NUMERIC=C` before that (and moves `LC_ALL` into `LANG`, since `LC_ALL` would override it).
+- `addons/godot_wry/bin/x86_64-unknown-linux-gnu/libgodot_wry.so` is not the one from the godot-wry 1.0.2 release. That one never initialises GTK, so the web view doesn't start ("GTK has not been initialized"). It's built from the v1.0.2 tag plus upstream's fix [a0709c3](https://github.com/doceazedo/godot_wry/commit/a0709c3) (#79, not in a release yet). To build it again: `git clone https://github.com/doceazedo/godot_wry && cd godot_wry && git checkout v1.0.2 && git cherry-pick a0709c3 && cd rust && cargo build --release --locked --target x86_64-unknown-linux-gnu` (needs the WebKitGTK 4.1, GTK 3 and libsoup 3 development files), then copy `target/x86_64-unknown-linux-gnu/release/libgodot_wry.so`. It needs at most glibc 2.34, like the release's.
 
 ### Android
 
@@ -145,5 +158,5 @@ Installs every plugin the repository lists, checks each one runs from the data f
 | `scripts/sources/` | `Plugins` (finds, loads, installs and removes plugins), `SourcePlugin` (the base class plugins extend, with HTML helpers), `Sources` (routes searches, new books and chapter downloads to plugins) |
 | `scripts/ui/` | Theme, icons (SVG rendered at runtime), app shell (`main.gd`), pages, widgets |
 | `scripts/sources/web_extract.gd` | JavaScript injected into Web-tab pages (finds chapter text and next/prev links on any page, runs plugins' site recognisers, highlights the paragraph being read) |
-| `addons/godot_wry/` | godot-wry 1.0.2 (MIT): system web view GDExtension for Windows, macOS, Linux |
+| `addons/godot_wry/` | godot-wry 1.0.2 (MIT): system web view GDExtension for Windows, macOS, Linux (the Linux library has an upstream fix on top, see "Linux AppImage") |
 | `plugins/` | Plugins you're working on (git-ignored; see [PLUGINS.md](../PLUGINS.md)) |

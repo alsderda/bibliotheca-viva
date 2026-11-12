@@ -49,7 +49,7 @@ Builds are on the [releases page](https://github.com/alsderda/bibliotheca-viva/r
 
 - **Windows**: `bibliotheca-viva-Setup-<version>.exe`. Run it; run a newer one to update.
 - **macOS** (Apple Silicon and Intel): `bibliotheca-viva-<version>.dmg` (drag the app to Applications) or the `.app` in `bibliotheca-viva-<version>-macos.zip`. The app isn't notarized by Apple, so the first time macOS won't open it: go to System Settings → Privacy & Security and click **Open Anyway**.
-- **Linux** (x86_64): `bibliotheca-viva-<version>-x86_64.AppImage`. Make it executable (`chmod +x`) and run it. The Web tab needs WebKitGTK (`libwebkit2gtk-4.1`) and reading aloud needs speech-dispatcher; most desktop distributions have both.
+- **Linux** (x86_64): `bibliotheca-viva-<version>-x86_64.AppImage`. Make it executable (`chmod +x`) and run it. The Web tab needs WebKitGTK (`libwebkit2gtk-4.1`) and reading aloud needs speech-dispatcher; most desktop distributions have both. It runs through XWayland on Wayland desktops, because the web view needs X11.
 - **Android**: `bibliotheca-viva-<version>.apk`. Open it on the phone to install (allow installing from your browser or file manager when asked).
 
 ## Development

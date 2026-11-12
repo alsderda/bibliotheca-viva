@@ -43,6 +43,22 @@ func _ready() -> void:
 		var l := UI.label("The built-in browser isn't available on this platform yet. Desktop builds use the system web view (WebKit, WebView2 or WebKitGTK).", "Muted", true)
 		col.add_child(UI.margin(l, 32, 32, 32, 0))
 		return
+	if OS.get_name() == "Linux":
+		# godot-wry puts WebKitGTK inside Godot's X11 window (project.godot makes Godot
+		# use X11 on Linux), and it refuses to start unless GTK uses X11 too, which it
+		# doesn't by default on a Wayland desktop.
+		OS.set_environment("GDK_BACKEND", "x11")
+		# WebKitGTK's DMA-BUF renderer draws nothing (a black page) with NVIDIA's
+		# driver, and the web view is a child X11 window, so the older path is fine.
+		if not OS.has_environment("WEBKIT_DISABLE_DMABUF_RENDERER"):
+			OS.set_environment("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+		# GTK sets the C locale from the environment when it starts. With a locale
+		# like de_DE in LC_NUMERIC, Godot would then write floats with a decimal
+		# comma, and every JSON file the app saves after that is broken.
+		if OS.get_environment("LC_ALL") != "":
+			OS.set_environment("LANG", OS.get_environment("LC_ALL"))
+			OS.unset_environment("LC_ALL")
+		OS.set_environment("LC_NUMERIC", "C")
 	web = ClassDB.instantiate("WebView")
 	web.set("full_window_size", false)  # default true covers the whole app window
 	web.set("data_directory", ProjectSettings.globalize_path(Settings.data_dir() + "/web"))
