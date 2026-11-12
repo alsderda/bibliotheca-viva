@@ -11,6 +11,7 @@
 #   installer/build.sh mac                  # export/bibliotheca-viva-<version>-macos.zip (the .app; macOS only)
 #   installer/build.sh dmg                  # export/bibliotheca-viva-<version>.dmg (macOS only)
 #   installer/build.sh appimage             # export/bibliotheca-viva-<version>-x86_64.AppImage
+#   installer/build.sh appimage --install   # also install it for this user (~/.local/bin, app menu; Linux only)
 #   installer/build.sh exe apk              # several at once
 #
 # Needs Godot 4.7 with export templates. Godot doesn't add itself to PATH, so if
@@ -49,7 +50,7 @@ for arg in "$@"; do
 		apk | exe | installer | mac | dmg | appimage) targets+=("$arg") ;;
 		--release) apk_mode=release ;;
 		--install) install=1 ;;
-		-h | --help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+		-h | --help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 		*) die "unknown option: $arg (try --help)" ;;
 	esac
 done
@@ -81,6 +82,10 @@ if [ ${#targets[@]} -eq 0 ]; then
 		read -r -p "Install the APK on the connected device with adb? [y/N] " answer
 		[[ "$answer" =~ ^[Yy] ]] && install=1
 	fi
+	if [[ " ${targets[*]} " == *" appimage "* ]] && [ "$os" = linux ]; then
+		read -r -p "Install the AppImage for this user (~/.local/bin and the app menu)? [y/N] " answer
+		[[ "$answer" =~ ^[Yy] ]] && install=1
+	fi
 fi
 want() { [[ " ${targets[*]} " == *" $1 "* ]]; }
 
@@ -89,6 +94,9 @@ if want installer && [ "$os" != windows ] && ! command -v mcs >/dev/null; then
 fi
 if { want mac || want dmg; } && [ "$os" != mac ]; then
 	die "the macOS builds need a Mac (Godot only makes .app bundles there, and the DMG needs hdiutil)"
+fi
+if want appimage && [ "$install" = 1 ] && [ "$os" != linux ]; then
+	die "installing the AppImage (--install) only works on Linux"
 fi
 if want appimage && ! command -v mksquashfs >/dev/null; then
 	die "the AppImage needs mksquashfs (squashfs-tools on Linux, brew install squashfs on macOS)"
@@ -406,6 +414,8 @@ build_appimage() {
 	export_preset release "Linux" "$stage/bibliotheca-viva.x86_64"
 
 	mkdir -p "$appdir/usr/bin"
+	# Without the web view library the app still starts, but the Web tab is gone.
+	[ -f "$stage/libgodot_wry.so" ] || die "the export has no libgodot_wry.so (addons/godot_wry)"
 	mv "$stage"/*.x86_64 "$stage"/*.so "$appdir/usr/bin/"
 	copy_licenses "$appdir/usr/share/licenses/bibliotheca-viva"
 	cat > "$appdir/AppRun" <<-'EOF'
@@ -414,16 +424,7 @@ build_appimage() {
 		exec "$HERE/usr/bin/bibliotheca-viva.x86_64" "$@"
 	EOF
 	chmod +x "$appdir/AppRun" "$appdir/usr/bin/bibliotheca-viva.x86_64"
-	cat > "$appdir/bibliotheca-viva.desktop" <<-'EOF'
-		[Desktop Entry]
-		Type=Application
-		Name=Bibliothéca-viva
-		Comment=Ebook reader with text-to-speech
-		Exec=bibliotheca-viva
-		Icon=bibliotheca-viva
-		Categories=Office;
-		Terminal=false
-	EOF
+	desktop_entry bibliotheca-viva > "$appdir/bibliotheca-viva.desktop"
 	cp assets/icons/icon_256.png "$appdir/bibliotheca-viva.png"
 	ln -s bibliotheca-viva.png "$appdir/.DirIcon"
 
@@ -437,6 +438,44 @@ build_appimage() {
 	chmod +x "$out"
 	rm -rf "$stage"
 	built+=("$out")
+	[ "$install" = 1 ] && install_appimage "$out"
+	return 0
+}
+
+# The app menu entry; $1 is the command it runs.
+desktop_entry() {
+	cat <<-EOF
+		[Desktop Entry]
+		Type=Application
+		Name=Bibliothéca-viva
+		Comment=Ebook reader with text-to-speech
+		Exec=$1
+		Icon=bibliotheca-viva
+		Categories=Office;Viewer;
+		Terminal=false
+	EOF
+}
+
+# Installs the AppImage for this user: the program as ~/.local/bin/bibliotheca-viva,
+# an app menu entry and the icon. Running it again replaces them, which is how you
+# update. Library and settings stay in ~/.local/share/bibliotheca-viva.
+install_appimage() {
+	local bin="$HOME/.local/bin" data="${XDG_DATA_HOME:-$HOME/.local/share}"
+	echo
+	echo "== Installing for $(id -un)"
+	mkdir -p "$bin" "$data/applications" "$data/icons/hicolor/256x256/apps" "$data/icons/hicolor/scalable/apps"
+	# rm first: a running copy keeps its file, and cp over it would fail ("text file busy").
+	rm -f "$bin/bibliotheca-viva"
+	cp "$1" "$bin/bibliotheca-viva"
+	chmod 755 "$bin/bibliotheca-viva"
+	cp assets/icons/icon_256.png "$data/icons/hicolor/256x256/apps/bibliotheca-viva.png"
+	cp assets/icon.svg "$data/icons/hicolor/scalable/apps/bibliotheca-viva.svg"
+	desktop_entry "$bin/bibliotheca-viva" > "$data/applications/bibliotheca-viva.desktop"
+	command -v update-desktop-database >/dev/null && update-desktop-database -q "$data/applications" || true
+	command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t "$data/icons/hicolor" 2>/dev/null || true
+	echo "  $bin/bibliotheca-viva"
+	echo "  $data/applications/bibliotheca-viva.desktop"
+	case ":$PATH:" in *":$bin:"*) ;; *) echo "  ($bin isn't on PATH; the app menu entry works anyway)" ;; esac
 }
 
 want exe && build_exe
