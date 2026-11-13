@@ -6,7 +6,8 @@ extends Node
 ## spoken as one utterance, or split into sentences in "sentence" mode, with
 ## configurable pauses between sentences, paragraphs and after headings.
 ## On Windows the audio is rendered and played by WinVoice, which trims the silence
-## Windows voices add to every utterance. On Android the BibliothecaVivaSpeech plugin
+## Windows voices add to every utterance. On Linux LinuxVoice speaks through spd-say,
+## because Godot's speech-dispatcher code sends SSML some engines read out as text. On Android the BibliothecaVivaSpeech plugin
 ## (addons/android_speech) plays everything itself, so reading continues in the
 ## background (see "Android" below). Elsewhere, when a pause is 0 the next utterance
 ## is queued with the OS while the current one is still speaking.
@@ -48,6 +49,7 @@ var _precise_waits := 0
 var _queued: Array = []          # utterances handed to the OS ahead of time: [{id, para, chunk, chunks}]
 var _resume_after_gap := Callable()
 var _win: WinVoice               # gap-free Windows playback; null when not in use
+var _linux: LinuxVoice           # Linux playback through spd-say; null when not in use
 var _voices_cache: Array = []
 
 var _droid: Object                # BibliothecaVivaSpeech plugin on Android; null elsewhere
@@ -73,6 +75,11 @@ func _ready() -> void:
 		_win.ended.connect(_on_ended)
 		_win.failed.connect(_on_win_failed)
 		_win.voices_changed.connect(voices_changed.emit)
+	elif LinuxVoice.available():
+		_linux = LinuxVoice.new()
+		add_child(_linux)
+		_linux.ended.connect(_on_ended)
+		_linux.failed.connect(_on_linux_failed)
 	if Engine.has_singleton("BibliothecaVivaSpeech"):
 		_droid = Engine.get_singleton("BibliothecaVivaSpeech")
 		_droid.connect("chunk_started", _on_droid_chunk)
@@ -260,6 +267,9 @@ func preview(text: String) -> void:
 		if _win:
 			_win.speak(text, voice_id(), int(Settings.get_value("tts_volume")),
 				float(Settings.get_value("tts_rate")), float(Settings.get_value("tts_pitch")), 0)
+		elif _linux:
+			_linux.speak(text, voice_id(), int(Settings.get_value("tts_volume")),
+				float(Settings.get_value("tts_rate")), float(Settings.get_value("tts_pitch")), 0)
 		else:
 			DisplayServer.tts_speak(text, voice_id(), int(Settings.get_value("tts_volume")),
 				float(Settings.get_value("tts_pitch")), float(Settings.get_value("tts_rate")), 0, true)
@@ -353,6 +363,9 @@ func _submit(text: String) -> int:
 	if _win:
 		_win.speak(text, voice_id(), int(Settings.get_value("tts_volume")),
 			float(Settings.get_value("tts_rate")), float(Settings.get_value("tts_pitch")), id)
+	elif _linux:
+		_linux.speak(text, voice_id(), int(Settings.get_value("tts_volume")),
+			float(Settings.get_value("tts_rate")), float(Settings.get_value("tts_pitch")), id)
 	else:
 		DisplayServer.tts_speak(text, voice_id(), int(Settings.get_value("tts_volume")),
 			float(Settings.get_value("tts_pitch")), float(Settings.get_value("tts_rate")), id, false)
@@ -360,7 +373,8 @@ func _submit(text: String) -> int:
 
 
 ## Get the next utterance ready. WinVoice renders it in the background; with OS
-## voices it is queued with the OS, but only when the pause before it is 0.
+## voices it is queued with the OS, but only when the pause before it is 0
+## (not with LinuxVoice: one spd-say per utterance can't keep them in order).
 func _queue_ahead() -> void:
 	if not _queued.is_empty():
 		return
@@ -370,7 +384,7 @@ func _queue_ahead() -> void:
 	if _win:
 		_win.prefetch(next.chunks[next.chunk], voice_id(), float(Settings.get_value("tts_rate")), float(Settings.get_value("tts_pitch")))
 		return
-	if _gap_ms(items, current, _chunk, _chunks) > 0:
+	if _linux or _gap_ms(items, current, _chunk, _chunks) > 0:
 		return
 	next.id = _submit(next.chunks[next.chunk])
 	_queued.append(next)
@@ -398,6 +412,8 @@ func _tts_stop() -> void:
 		_droid.stop()
 	elif _win:
 		_win.stop()
+	elif _linux:
+		_linux.stop()
 	else:
 		DisplayServer.tts_stop()
 
@@ -405,6 +421,8 @@ func _tts_stop() -> void:
 func _tts_pause() -> void:
 	if _win:
 		_win.pause()
+	elif _linux:
+		_linux.pause()
 	else:
 		DisplayServer.tts_pause()
 
@@ -412,6 +430,8 @@ func _tts_pause() -> void:
 func _tts_resume() -> void:
 	if _win:
 		_win.resume()
+	elif _linux:
+		_linux.resume()
 	else:
 		DisplayServer.tts_resume()
 
@@ -421,6 +441,19 @@ func _on_win_failed() -> void:
 	_win.stop()
 	_win = null
 	voices_changed.emit()
+	if playing and _active_id != -1:
+		var was_paused := paused
+		_cancel_utterance()
+		_speak_chunk()
+		if was_paused:
+			_tts_pause()
+
+
+## spd-say can't be used: switch to Godot's own TTS and redo the current chunk.
+func _on_linux_failed() -> void:
+	_linux.stop()
+	_linux.queue_free()
+	_linux = null
 	if playing and _active_id != -1:
 		var was_paused := paused
 		_cancel_utterance()

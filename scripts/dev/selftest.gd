@@ -479,6 +479,23 @@ func _pacing() -> void:
 			check("SAPI5 silent clip plays", ended_id, 999)
 			check("windows helper survives a silent clip", Speech._win != null and not Speech._win.is_broken(), true)
 
+	# Linux: spoken through spd-say as plain text (Godot's SSML marks get read out by RHVoice)
+	if Speech._linux:
+		Settings.set_value("tts_mode", "paragraph")
+		Settings.set_value("tts_pause_paragraph", 0)
+		started.clear()
+		Speech.paragraph_started.connect(cb)
+		Speech.play([{"text": "-dash first & <markup>.", "kind": "p"}, {"text": "Done.", "kind": "p"}], 0)
+		await get_tree().create_timer(0.2).timeout
+		Speech.toggle()  # pause: stops spd-say
+		await get_tree().create_timer(0.3).timeout
+		check("linux pause holds", Speech.playing and Speech.paused and Speech.current == 0, true)
+		Speech.toggle()  # resume: speaks the paragraph again
+		await Speech.reached_end
+		Speech.paragraph_started.disconnect(cb)
+		check("linux voice plays and resumes", started, [0, 1])
+		check("linux voice still in use", Speech._linux != null, true)
+
 
 # --- fetch manager (Net) against a small local server ---------------------------
 
