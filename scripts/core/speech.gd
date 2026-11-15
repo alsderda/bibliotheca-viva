@@ -7,7 +7,8 @@ extends Node
 ## configurable pauses between sentences, paragraphs and after headings.
 ## On Windows the audio is rendered and played by WinVoice, which trims the silence
 ## Windows voices add to every utterance. On Linux LinuxVoice speaks through spd-say,
-## because Godot's speech-dispatcher code sends SSML some engines read out as text. On Android the BibliothecaVivaSpeech plugin
+## because Godot's speech-dispatcher code sends SSML some engines read out as text, and
+## renders RHVoice voices itself so they can go faster than the engine's 2x. On Android the BibliothecaVivaSpeech plugin
 ## (addons/android_speech) plays everything itself, so reading continues in the
 ## background (see "Android" below). Elsewhere, when a pause is 0 the next utterance
 ## is queued with the OS while the current one is still speaking.
@@ -372,9 +373,10 @@ func _submit(text: String) -> int:
 	return id
 
 
-## Get the next utterance ready. WinVoice renders it in the background; with OS
-## voices it is queued with the OS, but only when the pause before it is 0
-## (not with LinuxVoice: one spd-say per utterance can't keep them in order).
+## Get the next utterance ready. WinVoice renders it in the background, and so does
+## LinuxVoice for the voices it renders; with OS voices it is queued with the OS, but
+## only when the pause before it is 0 (not with LinuxVoice's other voices: one spd-say
+## per utterance can't keep them in order).
 func _queue_ahead() -> void:
 	if not _queued.is_empty():
 		return
@@ -384,7 +386,10 @@ func _queue_ahead() -> void:
 	if _win:
 		_win.prefetch(next.chunks[next.chunk], voice_id(), float(Settings.get_value("tts_rate")), float(Settings.get_value("tts_pitch")))
 		return
-	if _linux or _gap_ms(items, current, _chunk, _chunks) > 0:
+	if _linux:
+		_linux.prefetch(next.chunks[next.chunk], voice_id(), float(Settings.get_value("tts_rate")), float(Settings.get_value("tts_pitch")))
+		return
+	if _gap_ms(items, current, _chunk, _chunks) > 0:
 		return
 	next.id = _submit(next.chunks[next.chunk])
 	_queued.append(next)

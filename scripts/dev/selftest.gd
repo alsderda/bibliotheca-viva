@@ -10,6 +10,7 @@ func _ready() -> void:
 	TextRules.rules.clear()
 	_rules()
 	_sentences()
+	_stretch()
 	_book_search()
 	_sites()
 	_versions()
@@ -495,6 +496,37 @@ func _pacing() -> void:
 		Speech.paragraph_started.disconnect(cb)
 		check("linux voice plays and resumes", started, [0, 1])
 		check("linux voice still in use", Speech._linux != null, true)
+
+		# RHVoice voices are rendered to clips, so speeds above the engine's 2x work and pause is real
+		if Speech._linux.renders(Speech.voice_id()):
+			var text := "The rain had not stopped for three days, and the river climbed the steps of the mill."
+			var took := {}
+			for rate in [2.0, 3.0]:
+				Settings.set_value("tts_rate", rate)
+				Speech.play([{"text": text, "kind": "p"}, {"text": text, "kind": "p"}], 0)
+				await Speech.paragraph_started  # the second one: its clip was rendered ahead
+				var t1 := Time.get_ticks_msec()
+				await Speech.reached_end
+				took[rate] = Time.get_ticks_msec() - t1
+			Settings.set_value("tts_rate", 1.0)
+			check("linux rendering still in use", Speech._linux != null and Speech._linux.renders(Speech.voice_id()), true)
+			var ratio: float = float(took[2.0]) / float(took[3.0])
+			check("linux 3x is 1.5 times as fast as 2x (%d ms, %d ms)" % [took[2.0], took[3.0]], ratio > 1.35 and ratio < 1.65, true)
+
+
+## Time-stretching (LinuxVoice) changes the length and keeps the pitch.
+func _stretch() -> void:
+	var tone := PackedByteArray()
+	tone.resize(24000 * 2)
+	for i in 24000:
+		tone.encode_s16(i * 2, roundi(8000.0 * sin(TAU * 220.0 * i / 24000.0)))
+	var fast := LinuxVoice.stretch(tone, 24000, 1.5)
+	check("stretch 1.5x shortens the clip (%d samples)" % (fast.size() / 2), absi(fast.size() / 2 - 16000) < 1500, true)
+	var crossings := 0
+	for i in range(1, 12000):
+		if fast.decode_s16(i * 2 - 2) < 0 and fast.decode_s16(i * 2) >= 0:
+			crossings += 1
+	check("stretch keeps the pitch (%d cycles in 0.5 s)" % crossings, absi(crossings - 110) <= 3, true)
 
 
 # --- fetch manager (Net) against a small local server ---------------------------
