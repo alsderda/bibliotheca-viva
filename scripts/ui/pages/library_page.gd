@@ -166,7 +166,7 @@ func _filtered() -> Array:
 			continue
 		if _source != "" and b.source != _source:
 			continue
-		if _tag != "" and not Library.has_tag(b, _tag):
+		if _tag != "" and not Library.matches_tag(b, _tag):
 			continue
 		if not _plugin_filters.is_empty() and not _plugin_match(b):
 			continue
