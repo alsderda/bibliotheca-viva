@@ -46,7 +46,7 @@ Versions follow Android's scheme: a version name people read and a version code 
 
 PRs don't change the version. After each merge into `main` that changes anything in `scripts/`, `scenes/`, `addons/`, `assets/`, `installer/`, `project.godot` or `export_presets.cfg`, a GitHub workflow (`.github/workflows/bump-version.yml`) runs `scripts/dev/bump_version.sh`, which raises the patch number by 1 and the version code by 10, and pushes that as a "Bump version to …" commit. Merges that only touch docs or CI get no bump. Bumping in every PR made PRs open at the same time conflict on the same lines.
 
-For a bigger release, raise minor or major (and the version code) by hand in the PR; when a merge changes `config/version` itself, the workflow leaves it alone. The workflow can only push to `main` because the ruleset on `main` lets GitHub Actions bypass it.
+For a bigger release, raise minor or major (and the version code) by hand in the PR; when a merge changes `config/version` itself, the workflow leaves it alone. The bump is a direct push to `main`, so the ruleset on `main` mustn't block it: either it requires no status checks, or the repo has a deploy key with write access whose private key is in the `BUMP_DEPLOY_KEY` secret, and the ruleset lets deploy keys bypass it. (A personal repo's ruleset can't let GitHub Actions itself bypass it.)
 
 The Android build and the Windows file properties pick up the version name from `project.godot` (their own fields in the presets are left empty). Settings → About shows both.
 

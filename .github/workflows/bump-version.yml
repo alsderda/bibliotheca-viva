@@ -32,6 +32,9 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+          # A deploy key with write access, allowed to bypass the ruleset on main, if the repo has one (a personal
+          # repo's ruleset can't let GitHub Actions itself bypass it). Without the secret this uses the usual token.
+          ssh-key: ${{ secrets.BUMP_DEPLOY_KEY }}
 
       # A PR that raises the version by hand (a minor or major release) keeps its number.
       - name: Skip if the merge set the version itself
@@ -46,8 +49,8 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
 
-      # Pushes made with the workflow's token don't start other workflows, so this commit can't trigger itself.
-      # The ruleset on main lets GitHub Actions bypass it; without that the push is refused.
+      # The push must be allowed past the ruleset on main (see "Versions" in docs/DEVELOPMENT.md). If it starts this
+      # workflow again, the step above sees the version changed and skips.
       - name: Bump the version and push
         if: steps.manual.outputs.skip != 'true'
         run: |
