@@ -103,6 +103,14 @@ func library_filter_matches(book: Dictionary, key: String, value: String) -> boo
 	return v != null and str(v) == value
 
 
+## The tags the Library's Tag picker offers for `book`. Picking one also shows
+## the books it was offered for. Default: the book's tags. A site that gives each
+## book dozens of tags can offer a few broad ones instead; the book keeps all of
+## its tags either way.
+func library_tags(book: Dictionary) -> Array:
+	return book.get("tags", [])
+
+
 # --- saved searches ----------------------------------------------------------
 
 ## A page that lists works and can be saved as a search, watched for new works.

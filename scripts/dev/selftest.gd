@@ -113,6 +113,7 @@ func _sites() -> void:
 	check("library filter matches extra", sp.library_filter_matches({"extra": {"status": "completed"}}, "status", "completed"), true)
 	check("library filter matches list", sp.library_filter_matches({"extra": {"genre": ["a", "b"]}}, "genre", "b"), true)
 	check("library filter without extra", sp.library_filter_matches({}, "status", "completed"), false)
+	check("tag picker offers a book's tags by default", sp.library_tags({"tags": ["A", "B"]}), ["A", "B"])
 	_epub_matching()
 	_epub_only_chapters()
 	_series_parts()

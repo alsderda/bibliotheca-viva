@@ -508,11 +508,24 @@ static func has_tag(book: Dictionary, tag: String) -> bool:
 	return false
 
 
-## Every tag in the library, sorted, each once (ignoring case).
+## True when a book has the tag or its plugin offers the tag for it in the Tag
+## picker (see picker_tags), ignoring case.
+func matches_tag(book: Dictionary, tag: String) -> bool:
+	return has_tag(book, tag) or has_tag({"tags": picker_tags(book)}, tag)
+
+
+## The tags the Tag picker offers for a book: its own, or what its plugin picks
+## (SourcePlugin.library_tags).
+func picker_tags(book: Dictionary) -> Array:
+	var p := Plugins.get_plugin(str(book.get("source", "")))
+	return p.library_tags(book) if p else book.get("tags", [])
+
+
+## Every tag the Tag picker offers, sorted, each once (ignoring case).
 func all_tags() -> Array:
 	var all := []
 	for b in books:
-		all.append_array(b.get("tags", []))
+		all.append_array(picker_tags(b))
 	var out := clean_tags(all)
 	out.sort_custom(func(a, c): return a.naturalnocasecmp_to(c) < 0)
 	return out
