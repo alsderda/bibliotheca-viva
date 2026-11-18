@@ -100,6 +100,7 @@ func a_seed() -> void:
 	Library.update_book(f.id, {"cover": Library.save_cover(f.id, img)})
 	TextRules.add_rule(TextRules.new_rule({"name": "global", "pattern": "HP", "replace": "health"}))
 	TextRules.add_rule(TextRules.new_rule({"name": "per book", "pattern": "Ahab", "replace": "Ay-hab", "book": w.id}))
+	Settings.set_value("tts_pause_paragraph", 400)
 	Settings.set_value("font_size", 24)
 	Settings.set_value("tts_voice", "a-voice-only-here")
 	install_test_plugin("1.0.0")
@@ -132,7 +133,8 @@ func b_first() -> void:
 	check("progress", w.progress, {"chapter": 2, "paragraph": 5})
 	check("rules", TextRules.rules.map(func(r): return r.name), ["global", "per book"])
 	check("per-book rule points at local book", TextRules.rules[1].book, w.id)
-	check("setting synced", Settings.get_value("font_size"), 24)
+	check("setting synced", int(Settings.get_value("tts_pause_paragraph")), 400)
+	check("text size stays local", int(Settings.get_value("font_size")), 20)
 	check("voice stays local", Settings.get_value("tts_voice"), "")
 	check("one other device", Sync.devices.size(), 1)
 	check("plugin arrived and runs", test_plugin_version(), "1.0.0")
@@ -159,8 +161,9 @@ func a_second() -> void:
 	var img := Image.load_from_file(f.cover)
 	check("cover picked on other device", img != null and img.get_pixel(0, 0).is_equal_approx(Color.RED), true)
 	check("voice untouched", Settings.get_value("tts_voice"), "a-voice-only-here")
+	check("text size untouched", int(Settings.get_value("font_size")), 24)
 	Library.remove_book(file_book().id)
-	Settings.set_value("font_size", 26)
+	Settings.set_value("tts_pause_paragraph", 450)
 	install_test_plugin("1.1.0")
 	await sync("sync after removal")
 	check("removed book's file gone", (await server_files("devices/%s/books/" % Sync.device_id())).size(), 1)
@@ -170,7 +173,7 @@ func b_second() -> void:
 	await sync()
 	check("removed book is gone", file_book().is_empty(), true)
 	check("one book", Library.books.size(), 1)
-	check("setting changed again", Settings.get_value("font_size"), 26)
+	check("setting changed again", int(Settings.get_value("tts_pause_paragraph")), 450)
 	check("plugin updated", test_plugin_version(), "1.1.0")
 	check("removed book's file gone here too", (await server_files("devices/%s/books/" % Sync.device_id())).size(), 1)
 	# nothing changed: no book is listed, fetched or sent
@@ -188,7 +191,7 @@ func b_second() -> void:
 
 ## Run at the same time as b_parallel.
 func a_parallel() -> void:
-	Settings.set_value("line_spacing", 9)
+	Settings.set_value("tts_pause_sentence", 190)
 	var w := web_book()
 	# a newer chapter list (e.g. the fiction page was opened) on this device
 	w.chapters.append(chapter(6))
@@ -198,7 +201,7 @@ func a_parallel() -> void:
 
 
 func b_parallel() -> void:
-	Settings.set_value("column_width", 800)
+	Settings.set_value("tts_pause_heading", 950)
 	var b := Library.add_book({"title": "Second Story", "source": "web", "url": "https://example.com/fiction/222/second", "chapters": [chapter(1)]})
 	Library.store_chapter(b.id, 0, "Chapter 1", paras("second"))
 	var w := web_book()
@@ -211,7 +214,7 @@ func b_parallel() -> void:
 
 func both_final() -> void:
 	await sync()
-	check("both settings", [int(Settings.get_value("line_spacing")), int(Settings.get_value("column_width"))], [9, 800])
+	check("both settings", [int(Settings.get_value("tts_pause_sentence")), int(Settings.get_value("tts_pause_heading"))], [190, 950])
 	check("both books", Library.books.size(), 2)
 	var w := web_book()
 	var titles: Array = w.chapters.map(func(c): return c.title)
@@ -406,7 +409,7 @@ func b_gone_after() -> void:
 
 ## Change something, then close the window: Sync should upload it before quitting.
 func a_close() -> void:
-	Settings.set_value("font_size", 30)
+	Settings.set_value("tts_pause_paragraph", 500)
 	get_tree().root.propagate_notification(NOTIFICATION_WM_CLOSE_REQUEST)
 	await get_tree().create_timer(30.0).timeout
 	check("app quit after the final sync", false, true)
@@ -414,7 +417,7 @@ func a_close() -> void:
 
 func b_after_close() -> void:
 	await sync()
-	check("change made just before closing arrived", int(Settings.get_value("font_size")), 30)
+	check("change made just before closing arrived", int(Settings.get_value("tts_pause_paragraph")), 500)
 
 
 func offline() -> void:

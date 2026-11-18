@@ -204,6 +204,7 @@ func _segmented(key: String, options: Array) -> Control:
 
 
 func _reading() -> void:
+	_content.add_child(UI.margin(UI.label("Text size and layout are kept per device, so your phone and computer can differ. The reader theme syncs.", "Muted", true), 6, 0, 0, 0))
 	_section("Appearance", [
 		_row("Reader theme", "Background and text colours while reading.", _segmented("reader_theme", [["dark", "Dark"], ["sepia", "Sepia"], ["light", "Light"]])),
 		_row("Font", "Literata (serif) or Inter (sans-serif).", _segmented("reader_font", [["serif", "Literata"], ["sans", "Inter"]])),
@@ -755,7 +756,7 @@ func _sync() -> void:
 		UI.label("Koofr (10 GB free): address https://app.koofr.net/dav/Koofr/, username is your Koofr email, and the password is an app password from Preferences → Password (your normal password won't work).", "Muted", true),
 		UI.label("Nextcloud: address https://<your server>/remote.php/dav/files/<your username>/ and an app password from Settings → Security.", "Muted", true),
 		UI.label("Any other WebDAV server works too. Google Drive and Dropbox don't offer WebDAV.", "Muted", true),
-		UI.label("Not synced: the selected voice (voices differ between devices) and plugins' own settings. When the same setting or book is changed on two devices, the most recent change wins; chapters saved on any device are kept.", "Small", true),
+		UI.label("Not synced: text size and layout (each device keeps its own), the selected voice (voices differ between devices) and plugins' own settings. When the same setting or book is changed on two devices, the most recent change wins; chapters saved on any device are kept.", "Small", true),
 	])
 
 
