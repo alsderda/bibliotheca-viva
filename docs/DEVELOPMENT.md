@@ -41,10 +41,12 @@ It's a bash script; on Windows, run it from Git Bash. You need Godot 4.7 with th
 
 Versions follow Android's scheme: a version name people read and a version code that only goes up.
 
-- **Version name** (`major.minor.patch`, e.g. `0.0.1`): `config/version` in `project.godot`. Every PR raises the patch number by 1, unless there's a reason not to (a PR that only touches docs, or a bigger release that raises minor or major and resets the numbers after it).
-- **Version code** (e.g. `10`): `config/version_code` in `project.godot` and `version/code` in the Android preset in `export_presets.cfg`. Both must be the same; `installer/build.sh` stops if they aren't. Every PR raises it by 10, unless there's a reason not to. The steps of 10 leave room for an extra build between two PRs, such as a hotfix.
+- **Version name** (`major.minor.patch`, e.g. `0.0.1`): `config/version` in `project.godot`.
+- **Version code** (e.g. `10`): `config/version_code` in `project.godot` and `version/code` in the Android preset in `export_presets.cfg`. Both must be the same; `installer/build.sh` stops if they aren't. The steps of 10 (below) leave room for an extra build in between, such as a hotfix.
 
-A GitHub check (`.github/workflows/version-check.yml`) enforces this: a PR that changes anything in `scripts/`, `scenes/`, `addons/`, `assets/`, `installer/`, `project.godot` or `export_presets.cfg` fails unless the version name and code both go up and the two codes match. A ruleset on `main` makes the check required, and only the repo admin can merge past it ("Merge without waiting for requirements") when there's a reason to skip the bump.
+PRs don't change the version. After each merge into `main` that changes anything in `scripts/`, `scenes/`, `addons/`, `assets/`, `installer/`, `project.godot` or `export_presets.cfg`, a GitHub workflow (`.github/workflows/bump-version.yml`) runs `scripts/dev/bump_version.sh`, which raises the patch number by 1 and the version code by 10, and pushes that as a "Bump version to …" commit. Merges that only touch docs or CI get no bump. Bumping in every PR made PRs open at the same time conflict on the same lines.
+
+For a bigger release, raise minor or major (and the version code) by hand in the PR; when a merge changes `config/version` itself, the workflow leaves it alone. The bump is a direct push to `main`, so the ruleset on `main` mustn't block it: either it requires no status checks, or the repo has a deploy key with write access whose private key is in the `BUMP_DEPLOY_KEY` secret, and the ruleset lets deploy keys bypass it. (A personal repo's ruleset can't let GitHub Actions itself bypass it.)
 
 The Android build and the Windows file properties pick up the version name from `project.godot` (their own fields in the presets are left empty). Settings → About shows both.
 
