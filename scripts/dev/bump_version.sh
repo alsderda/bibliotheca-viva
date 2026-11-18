@@ -1,5 +1,5 @@
 #!/bin/sh
-# Raises the version for a PR (see "Versions" in docs/DEVELOPMENT.md): patch number of config/version +1, and the
+# Raises the version (see "Versions" in docs/DEVELOPMENT.md): patch number of config/version +1, and the
 # version code +10 in both project.godot and export_presets.cfg. Run from the repo root.
 # Usage: scripts/dev/bump_version.sh
 set -eu

@@ -1,0 +1,87 @@
+# Raises the version on main after each merge that changes the app (see "Versions" in docs/DEVELOPMENT.md).
+# PRs don't bump it themselves: every bump touched the same lines, so PRs open at the same time always conflicted.
+name: Bump version
+
+on:
+  push:
+    branches: [main]
+    # Paths that end up in the app. Docs, README, agent notes and CI changes don't get a bump.
+    paths:
+      - 'scripts/**'
+      - 'scenes/**'
+      - 'addons/**'
+      - 'assets/**'
+      - 'installer/**'
+      - 'project.godot'
+      - 'export_presets.cfg'
+
+permissions:
+  contents: write
+
+# Two merges in a row must not race: the second run waits for the first, then pulls before bumping.
+concurrency:
+  group: bump-version
+
+jobs:
+  bump:
+    name: Bump version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      # A PR that raises the version by hand (a minor or major release) keeps its number.
+      - name: Skip if the merge set the version itself
+        id: manual
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          get() { git show "$1:project.godot" | sed -n 's/^config\/version="\(.*\)"$/\1/p'; }
+          if git cat-file -e "$BEFORE^{commit}" 2>/dev/null && [ "$(get "$BEFORE")" != "$(get "$AFTER")" ]; then
+            echo "This push changed config/version ($(get "$BEFORE") -> $(get "$AFTER")); leaving it as it is."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Pushes made with the workflow's token don't start other workflows, so this commit can't trigger itself.
+      # The ruleset on main lets GitHub Actions bypass it; without that the push is refused.
+      - name: Bump the version and push
+        if: steps.manual.outputs.skip != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Another push can land between our pull and our push, so sync, bump and push up to 3 times. If a bump
+          # already landed meanwhile there's nothing left to do; otherwise our bump goes up again on top.
+          attempt=1
+          while [ "$attempt" -le 3 ]; do
+            if ! git pull --rebase origin main; then
+              echo "Rebase conflicted; taking main as it is."
+              git rebase --abort || true
+              git reset --hard origin/main
+            fi
+            if git log -1 --pretty=%s origin/main | grep -q '^Bump version to '; then
+              echo "Main already ends with a version bump; nothing to do."
+              exit 0
+            fi
+            if ! git log -1 --pretty=%s | grep -q '^Bump version to '; then
+              scripts/dev/bump_version.sh
+              version=$(sed -n 's/^config\/version="\(.*\)"$/\1/p' project.godot)
+              git add project.godot export_presets.cfg
+              if git diff --cached --quiet; then
+                echo "No version change; nothing to commit."
+                exit 0
+              fi
+              git commit -m "Bump version to $version"
+            fi
+            if git push origin HEAD:main; then
+              echo "Pushed the version bump."
+              exit 0
+            fi
+            echo "Push was refused; syncing and trying again ($attempt/3)."
+            attempt=$((attempt + 1))
+          done
+          echo "The push kept being refused; giving up."
+          exit 1
