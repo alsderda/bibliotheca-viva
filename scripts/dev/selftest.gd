@@ -14,6 +14,7 @@ func _ready() -> void:
 	_book_search()
 	_sites()
 	_tag_suggest()
+	_picker()
 	_versions()
 	_sync_password()
 	_app_log()
@@ -137,6 +138,15 @@ func _sites() -> void:
 	check("tags cleaned from a list", Library.clean_tags(["A", "", "a", "B"]), ["A", "B"])
 	check("tag match ignores case", Library.has_tag({"tags": ["LitRPG"]}, "litrpg"), true)
 	check("tag missing", Library.has_tag({"tags": []}, "litrpg"), false)
+	var keep_books: Array = Library.books
+	Library.books = [
+		{"source": "file", "tags": ["Alpha", "Shared"]},
+		{"source": "web", "tags": ["Beta", "Shared"]},
+	]
+	check("all tags of file books", Library.all_tags("file"), ["Alpha", "Shared"])
+	check("all tags of web books", Library.all_tags("web"), ["Beta", "Shared"])
+	check("all tags without a source", Library.all_tags(), ["Alpha", "Beta", "Shared"])
+	Library.books = keep_books
 	var known := ["Dark fantasy", "Fantasy", "Finished", "LitRPG", "Sci-fi", "Urban Fantasy"]
 	check("tag matches by prefix first", Library.match_tags(known, [], "fa"), ["Fantasy", "Dark fantasy", "Urban Fantasy"])
 	check("tag matches ignore case", Library.match_tags(known, [], "LITR"), ["LitRPG"])
@@ -795,3 +805,25 @@ func _test_plugin(id: String, name: String, manifest: Dictionary, code: String) 
 	p.name = name
 	p.manifest = manifest
 	return p
+
+
+func _picker() -> void:
+	var p := Picker.new()
+	check("picker starts empty", [p.get_item_count(), p.get_selected()], [0, -1])
+	p.add_item("All sources")
+	p.add_item("A very long tag name that would run off a narrow screen")
+	check("picker items added", [p.get_item_count(), p.get_item_text(0), p.get_item_text(1)],
+		[2, "All sources", "A very long tag name that would run off a narrow screen"])
+	check("picker shows the first item", [p.get_selected(), p.text], [0, "All sources"])
+	p.select(1)
+	check("picker select shows the item", [p.get_selected(), p.text],
+		[1, "A very long tag name that would run off a narrow screen"])
+	var fired: Array = []
+	p.item_selected.connect(func(i): fired.append(i))
+	p.select(0)
+	check("picker select stays silent", [fired, p.get_selected()], [[], 0])
+	check("tap without moving", Picker.is_tap(Vector2.ZERO, Vector2.ZERO, 0, 0), true)
+	check("tap within slop", Picker.is_tap(Vector2.ZERO, Vector2(5, 0), 0, 0), true)
+	check("move past slop is no tap", Picker.is_tap(Vector2.ZERO, Vector2(30, 0), 0, 0), false)
+	check("scroll moved is no tap", Picker.is_tap(Vector2.ZERO, Vector2.ZERO, 0, 40), false)
+	p.free()

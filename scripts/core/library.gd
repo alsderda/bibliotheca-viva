@@ -545,11 +545,14 @@ func picker_tags(book: Dictionary) -> Array:
 
 
 ## Every tag the Tag picker offers, each replaced by its main tag (see
-## clean_aliases), sorted, each once (ignoring case).
-func all_tags() -> Array:
+## clean_aliases), sorted, each once (ignoring case). With a source (a plugin
+## id, "web" or "file"), only the tags of that source's books.
+func all_tags(source := "") -> Array:
 	var to_main := _alias_map()
 	var all := []
 	for b in books:
+		if source != "" and str(b.get("source", "")) != source:
+			continue
 		for t in picker_tags(b):
 			all.append(to_main.get(str(t).to_lower(), t))
 	var out := clean_tags(all)
