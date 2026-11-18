@@ -45,8 +45,13 @@ const DEFAULTS := {
 }
 
 ## Settings that only make sense on one device, so Sync leaves them alone.
-## (Voice ids differ between operating systems; a log is for the device with the problem.)
-const LOCAL_ONLY := ["tts_voice", "web_last_url", "plugin_settings", "logging"]
+## (Voice ids differ between operating systems; a log is for the device with the problem;
+## text size and layout suit the screen, e.g. larger text on a phone than on a PC.)
+const LOCAL_ONLY := [
+	"tts_voice", "web_last_url", "plugin_settings", "logging",
+	"reader_font", "font_size", "line_spacing", "paragraph_gap",
+	"column_width", "side_margin", "text_align", "first_line_indent",
+]
 
 const READER_THEMES := {
 	"dark": {"bg": Color("#121418"), "text": Color("#d8dbe0"), "muted": Color("#8a919c"), "highlight": Color(0.35, 0.55, 1.0, 0.18)},
