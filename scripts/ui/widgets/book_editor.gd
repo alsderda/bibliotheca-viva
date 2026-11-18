@@ -12,6 +12,10 @@ var _author: LineEdit
 var _tags: LineEdit
 var _synopsis: TextEdit
 var _suggest: HFlowContainer
+## Matching tags shown under the field, best first.
+var _matches: Array = []
+## True while a tag is being typed (the text changed since the field got focus).
+var _typing := false
 var _status: Label
 var _body: VBoxContainer
 var _scroll: ScrollContainer
@@ -57,7 +61,13 @@ func _build(book: Dictionary) -> void:
 	_title = _field(_body, "Title", book.get("title", ""), "Book title")
 	_author = _field(_body, "Author", book.get("author", ""), "Unknown")
 	_tags = _field(_body, "Tags", ", ".join(PackedStringArray(book.get("tags", []))), "Separate tags with commas, e.g. Fantasy, Finished")
-	_tags.text_changed.connect(func(_t): _fill_suggestions())
+	_tags.text_changed.connect(func(_t):
+		_typing = true
+		_fill_suggestions())
+	_tags.focus_exited.connect(func():
+		_typing = false
+		_fill_suggestions())
+	_tags.gui_input.connect(_tags_key)
 	_suggest = HFlowContainer.new()
 	_suggest.add_theme_constant_override("h_separation", 6)
 	_suggest.add_theme_constant_override("v_separation", 6)
@@ -87,26 +97,58 @@ func _build(book: Dictionary) -> void:
 	_title.grab_focus.call_deferred()
 
 
-## Tags other books have that this one doesn't yet: click to add.
+## Tags other books have that this one doesn't yet: click to add. While a tag
+## is being typed, only those matching it, and a click completes it.
 func _fill_suggestions() -> void:
 	UI.clear(_suggest)
-	var have := Library.clean_tags(_tags.text)
-	var lower := have.map(func(t): return t.to_lower())
-	var shown := 0
-	for tag in Library.all_tags():
-		if tag.to_lower() in lower:
-			continue
-		if shown == 0:
-			_suggest.add_child(UI.label("Add:", "Small"))
-		var b := UI.button(tag, "plus", "ChipButton", func():
-			_tags.text = ", ".join(PackedStringArray(Library.clean_tags(_tags.text) + [tag]))
-			_fill_suggestions(), UiTheme.MUTED)
-		_suggest.add_child(b)
-		shown += 1
-		if shown >= 12:
-			break
-	_suggest.visible = shown > 0
+	var parts := _tags.text.split(",")
+	var typed := ""
+	if _typing:
+		typed = parts[_typed_at()].strip_edges()
+		parts.remove_at(_typed_at())
+	_matches = Library.match_tags(Library.all_tags(), Library.clean_tags(Array(parts)), typed).slice(0, 12)
+	if not _matches.is_empty():
+		var hint := "Add:" if typed == "" else ("Matches:" if OS.has_feature("mobile") else "Tab to complete:")
+		_suggest.add_child(UI.label(hint, "Small"))
+	for tag in _matches:
+		_suggest.add_child(UI.button(tag, "plus", "ChipButton", func(): _complete(tag), UiTheme.MUTED))
+	_suggest.visible = not _matches.is_empty()
 	_fit.call_deferred()
+
+
+## Index of the comma-separated tag the caret is in.
+func _typed_at() -> int:
+	return _tags.text.substr(0, _tags.caret_column).count(",")
+
+
+## Puts `tag` in place of the one being typed (or after the others when nothing
+## is) and moves the caret after it.
+func _complete(tag: String) -> void:
+	var parts := Array(_tags.text.split(","))
+	var at := _typed_at() if _typing else parts.size()
+	var typing := _typing
+	var before := Library.clean_tags(parts.slice(0, at) + [tag])
+	var after := parts.slice(at + 1)
+	var all := Library.clean_tags(before + after)
+	var text := ", ".join(PackedStringArray(all))
+	if all.size() == before.size():  # nothing after it: ready for the next tag
+		text += ", "
+	_tags.text = text
+	_tags.caret_column = mini(", ".join(PackedStringArray(before)).length() + 2, text.length())
+	if typing:
+		_tags.grab_focus()
+	_typing = false
+	_fill_suggestions()
+
+
+## Tab completes the tag being typed with the first match.
+func _tags_key(event: InputEvent) -> void:
+	if not (event is InputEventKey and event.pressed and event.keycode == KEY_TAB and not event.shift_pressed):
+		return
+	if not _typing or _matches.is_empty() or _tags.text.split(",")[_typed_at()].strip_edges() == "":
+		return
+	_complete(_matches[0])
+	_tags.accept_event()
 
 
 func _fit() -> void:
