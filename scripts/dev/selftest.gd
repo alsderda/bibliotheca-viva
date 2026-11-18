@@ -130,6 +130,24 @@ func _sites() -> void:
 	check("tag matches skip a finished tag", Library.match_tags(known, [], "Finished"), [])
 	check("tag match offers the right case", Library.match_tags(known, [], "finished"), ["Finished"])
 	check("no typing matches every new tag", Library.match_tags(known, ["LitRPG"], "").size(), 5)
+	var groups := Library.clean_aliases([
+		{"tag": "Water", "aliases": "Hot water, Cold water"},
+		{"tag": "   ", "aliases": ["Nothing"]},
+		{"tag": "WATER", "aliases": ["Tap water"]},
+		{"tag": "Tea", "aliases": ["Tea", "Water", "hot water", "Green tea"]},
+		"junk",
+		{"aliases": ["No main here"]},
+		{"tag": "Coffee", "aliases": "Espresso, Latte, espresso "},
+	])
+	check("aliases cleaned from comma text", groups, [
+		{"tag": "Water", "aliases": ["Hot water", "Cold water"]},
+		{"tag": "Tea", "aliases": ["Green tea"]},
+		{"tag": "Coffee", "aliases": ["Espresso", "Latte"]},
+	])
+	check("alias maps to its main tag ignoring case", Library.resolve_tag(groups, "HOT water"), "Water")
+	check("alias of a later group maps too", Library.resolve_tag(groups, "green TEA"), "Tea")
+	check("main tag unchanged", Library.resolve_tag(groups, "Water"), "Water")
+	check("unknown tag unchanged", Library.resolve_tag(groups, "Soda"), "Soda")
 	check("page script builds", WebExtract.script().contains("function register("), true)
 	_site_rules()
 	_bookmarks()

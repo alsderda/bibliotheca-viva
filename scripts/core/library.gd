@@ -37,9 +37,14 @@ var revisions := {}
 var _dirty := {}  # book id -> true: its meta file needs writing
 var _index_dirty := false
 var _flush_queued := false
+## Lowercase alias -> main tag from the "tag_aliases" setting; null until needed.
+## Cached because matches_tag runs once per book on every filter pass.
+var _aliases_cache: Variant = null
 
 
 func _ready() -> void:
+	# Connected before any page, so pages that rebuild on this change see the new aliases.
+	Settings.changed.connect(func(k): if k == "tag_aliases": _aliases_cache = null)
 	_load()
 	_count_missing_words.call_deferred()
 
@@ -509,9 +514,27 @@ static func has_tag(book: Dictionary, tag: String) -> bool:
 
 
 ## True when a book has the tag or its plugin offers the tag for it in the Tag
-## picker (see picker_tags), ignoring case.
+## picker (see picker_tags), counting an alias as its main tag and ignoring case.
 func matches_tag(book: Dictionary, tag: String) -> bool:
-	return has_tag(book, tag) or has_tag({"tags": picker_tags(book)}, tag)
+	var to_main := _alias_map()
+	var want := str(to_main.get(tag.to_lower(), tag)).to_lower()
+	for t in book.get("tags", []):
+		if str(to_main.get(str(t).to_lower(), t)).to_lower() == want:
+			return true
+	for t in picker_tags(book):
+		if str(to_main.get(str(t).to_lower(), t)).to_lower() == want:
+			return true
+	return false
+
+
+func _alias_map() -> Dictionary:
+	if _aliases_cache == null:
+		var to_main := {}
+		for g in clean_aliases(Settings.get_value("tag_aliases")):
+			for a in g.aliases:
+				to_main[str(a).to_lower()] = g.tag
+		_aliases_cache = to_main
+	return _aliases_cache
 
 
 ## The tags the Tag picker offers for a book: its own, or what its plugin picks
@@ -521,9 +544,17 @@ func picker_tags(book: Dictionary) -> Array:
 	return p.library_tags(book) if p else book.get("tags", [])
 
 
-## Every tag the Tag picker offers, sorted, each once (ignoring case).
+## Every tag the Tag picker offers, each replaced by its main tag (see
+## clean_aliases), sorted, each once (ignoring case).
 func all_tags() -> Array:
-	return _sorted_tags(picker_tags)
+	var to_main := _alias_map()
+	var all := []
+	for b in books:
+		for t in picker_tags(b):
+			all.append(to_main.get(str(t).to_lower(), t))
+	var out := clean_tags(all)
+	out.sort_custom(func(a, c): return a.naturalnocasecmp_to(c) < 0)
+	return out
 
 
 ## Every tag the books themselves have (not just those the Tag picker offers),
@@ -539,6 +570,81 @@ func _sorted_tags(tags_of: Callable) -> Array:
 	var out := clean_tags(all)
 	out.sort_custom(func(a, c): return a.naturalnocasecmp_to(c) < 0)
 	return out
+
+
+## Tag alias groups cleaned for saving under the "tag_aliases" setting: an
+## Array of {"tag": main tag, "aliases": [tags]} (tags cleaned as clean_tags
+## does). Drops groups with no main tag and repeats of a main tag (ignoring
+## case; the first group wins). Drops an alias that is its own group's main
+## tag, any group's main tag, or already an alias in an earlier group, so an
+## alias always leads to one main tag in one step. Keeps groups with no aliases
+## left. Accepts aliases as an Array or comma-separated text.
+static func clean_aliases(groups: Variant) -> Array:
+	if not (groups is Array):
+		return []
+	var items: Array = groups
+	var main_seen := {}
+	for g in items:
+		if not (g is Dictionary) or not g.has("tag"):
+			continue
+		var main := HtmlText._re("\\s+").sub(str(g.get("tag", "")), " ", true).strip_edges()
+		if main != "" and not main_seen.has(main.to_lower()):
+			main_seen[main.to_lower()] = true
+	var claimed := {}
+	var emitted := {}
+	var out := []
+	for g in items:
+		if not (g is Dictionary) or not g.has("tag"):
+			continue
+		var main := HtmlText._re("\\s+").sub(str(g.get("tag", "")), " ", true).strip_edges()
+		if main == "" or emitted.has(main.to_lower()):
+			continue
+		emitted[main.to_lower()] = true
+		var aliases := []
+		for a in clean_tags(g.get("aliases", [])):
+			var low := str(a).to_lower()
+			if low == main.to_lower() or main_seen.has(low) or claimed.has(low):
+				continue
+			claimed[low] = true
+			aliases.append(a)
+		out.append({"tag": main, "aliases": aliases})
+	return out
+
+
+## The main tag that `tag` is an alias of in `groups` (as clean_aliases returns
+## them), spelled as the group spells it, ignoring case. A tag that is no alias
+## comes back unchanged; so does a main tag.
+static func resolve_tag(groups: Array, tag: String) -> String:
+	var low := tag.to_lower()
+	for g in groups:
+		if not (g is Dictionary):
+			continue
+		var main := str(g.get("tag", ""))
+		if main == "" or main.to_lower() == low:
+			continue
+		var raw: Variant = g.get("aliases", [])
+		if not (raw is Array):
+			continue
+		var aliases: Array = raw
+		for a in aliases:
+			if str(a).to_lower() == low:
+				return main
+	return tag
+
+
+## resolve_tag with the "tag_aliases" setting.
+func main_tag(tag: String) -> String:
+	return resolve_tag(clean_aliases(Settings.get_value("tag_aliases")), tag)
+
+
+## The aliases of a main tag in the "tag_aliases" setting, ignoring case; []
+## when it has none.
+func aliases_of(tag: String) -> Array:
+	for g in clean_aliases(Settings.get_value("tag_aliases")):
+		if str(g.get("tag", "")).to_lower() == tag.to_lower():
+			var aliases: Array = g.get("aliases", [])
+			return aliases.duplicate()
+	return []
 
 
 ## Tags from `all` that complete what's been typed so far, ignoring case: those
