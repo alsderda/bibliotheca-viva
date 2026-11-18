@@ -216,8 +216,8 @@ func _filter_row() -> Control:
 	var sources := {}
 	for b in Library.books:
 		sources[b.source] = true
-	var tags := Library.all_tags()
-	if sources.size() < 2 and _source == "" and tags.is_empty() and _tag == "":
+	var every := Library.all_tags()
+	if sources.size() < 2 and _source == "" and every.is_empty() and _tag == "":
 		return null
 	var names := {}
 	for id in sources:
@@ -234,7 +234,7 @@ func _filter_row() -> Control:
 	row.add_theme_constant_override("h_separation", 10)
 	row.add_theme_constant_override("v_separation", 10)
 	if ids.size() > 2 or _source != "":
-		var pick := OptionButton.new()
+		var pick := Picker.new()
 		pick.focus_mode = Control.FOCUS_NONE
 		for id in ids:
 			pick.add_item(names[id])
@@ -245,6 +245,7 @@ func _filter_row() -> Control:
 			header_changed.emit()
 			_rebuild())
 		row.add_child(pick)
+	var tags := Library.all_tags(_source)
 	if not tags.is_empty() or _tag != "":
 		row.add_child(_tag_pick(tags))
 
@@ -270,7 +271,7 @@ func _tag_pick(tags: Array) -> Control:
 	if _tag != "" and at < 0:  # its last book was just untagged
 		tags = tags + [_tag]
 		at = tags.size() - 1
-	var pick := OptionButton.new()
+	var pick := Picker.new()
 	pick.focus_mode = Control.FOCUS_NONE
 	pick.add_item("Tag: Any")
 	for t in tags:
@@ -287,7 +288,7 @@ func _tag_pick(tags: Array) -> Control:
 func _plugin_filter_pick(f: Dictionary) -> Control:
 	var key := str(f.get("key", ""))
 	var options: Array = f.get("options", [])
-	var pick := OptionButton.new()
+	var pick := Picker.new()
 	pick.focus_mode = Control.FOCUS_NONE
 	pick.add_item("%s: Any" % f.get("label", key))
 	for o in options:
