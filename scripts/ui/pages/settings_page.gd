@@ -558,7 +558,8 @@ func _tags() -> void:
 		_content.add_child(UI.margin(UI.label("Tags in your library not in a group: " + s, "Muted", true), 6, 0, 0, 0))
 
 
-## One alias group: a main tag and its aliases as comma-separated text.
+## One alias group: a main tag and its aliases as comma-separated text, each
+## with tag chips under it while it has focus.
 func _alias_row(tag_text: String, alias_text: String, is_draft: bool, index: int) -> Control:
 	var tag := _line_edit(tag_text, 200)
 	tag.placeholder_text = "Main tag, e.g. Water"
@@ -575,13 +576,40 @@ func _alias_row(tag_text: String, alias_text: String, is_draft: bool, index: int
 		tag.text_changed.connect(func(t): (_alias_drafts[index] as Dictionary).tag = t)
 		alias.text_changed.connect(func(t): (_alias_drafts[index] as Dictionary).aliases = t)
 	_alias_rows.append([tag, alias])
+	var tag_suggest := TagSuggest.attach(tag, func(): return [Library.book_tags(), _alias_skip(tag, false)], true)
+	tag_suggest.only_while_focused = true
+	tag_suggest.completed.connect(func(_t): _save_aliases())
+	var alias_suggest := TagSuggest.attach(alias, func(): return [Library.book_tags(), _alias_skip(alias, true)])
+	alias_suggest.only_while_focused = true
+	alias_suggest.completed.connect(func(_t): _save_aliases())
 	var delete := UI.icon_button("trash", "Delete", func(): _delete_alias(index, is_draft))
 	if compact:
 		var tools := UI.hbox(2, [delete])
 		tools.alignment = BoxContainer.ALIGNMENT_END
-		return UI.panel("Row", UI.vbox(8, [tag, alias, tools]))
+		return UI.panel("Row", UI.vbox(8, [tag, tag_suggest, alias, alias_suggest, tools]))
+	var tag_box := UI.vbox(4, [tag, tag_suggest])
+	var alias_box := UI.vbox(4, [alias, alias_suggest])
+	alias_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	delete.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	return UI.panel("Row", UI.hbox(12, [tag, alias, delete]))
+	return UI.panel("Row", UI.hbox(12, [tag_box, alias_box, delete]))
+
+
+## Tags a completion must not offer for `edit`: every tag used in other rows,
+## plus this row's own main tag for the aliases field.
+func _alias_skip(edit: LineEdit, include_own_main: bool) -> Array:
+	var own := -1
+	for i in _alias_rows.size():
+		if (_alias_rows[i] as Array).has(edit):
+			own = i
+			break
+	var skip := []
+	for i in _alias_rows.size():
+		var row: Array = _alias_rows[i]
+		for c in row.size():
+			if i == own and (not include_own_main or c > 0):
+				continue
+			skip.append_array(Library.clean_tags(Array(str((row[c] as LineEdit).text).split(","))))
+	return skip
 
 
 ## Adds a blank row; it stays until it is saved with a main tag or deleted.

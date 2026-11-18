@@ -13,6 +13,7 @@ func _ready() -> void:
 	_stretch()
 	_book_search()
 	_sites()
+	_tag_suggest()
 	_versions()
 	_sync_password()
 	_app_log()
@@ -72,6 +73,21 @@ func _app_log() -> void:
 	check("nothing is logged while off", AppLog.export_text().contains("after logging off"), false)
 	AppLog.clear()
 	check("logs can be deleted", AppLog.files().size(), 0)
+
+
+func _tag_suggest() -> void:
+	check("typed index before the comma", TagSuggest.typed_index("Fan, Fi", 2), 0)
+	check("typed index after the comma", TagSuggest.typed_index("Fan, Fi", 5), 1)
+	check("typed index of an empty field", TagSuggest.typed_index("", 0), 0)
+	check("typed tag", TagSuggest.typed_now("Fan", 3, true, false), "Fan")
+	check("typed tag at the caret", TagSuggest.typed_now("Fan, Fi", 2, true, false), "Fan")
+	check("typed tag in the second tag", TagSuggest.typed_now("Fan, Fi", 6, true, false), "Fi")
+	check("nothing typed when not typing", TagSuggest.typed_now("Fan", 3, false, false), "")
+	check("single tag typed whole", TagSuggest.typed_now(" Fa ", 4, true, true), "Fa")
+	check("single tag completes whole", TagSuggest.completed_text("Fa", 2, "Fantasy", true, true), ["Fantasy", 7])
+	check("tag completed with room for the next", TagSuggest.completed_text("Fan", 3, "Fantasy", true, false), ["Fantasy, ", 9])
+	check("tag completed in the middle", TagSuggest.completed_text("Fan, Later", 3, "Fantasy", true, false), ["Fantasy, Later", 9])
+	check("tag added when nothing typed", TagSuggest.completed_text("Fantasy", 7, "Sci-fi", false, false), ["Fantasy, Sci-fi, ", 17])
 
 
 func _versions() -> void:
