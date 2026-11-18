@@ -523,12 +523,46 @@ func picker_tags(book: Dictionary) -> Array:
 
 ## Every tag the Tag picker offers, sorted, each once (ignoring case).
 func all_tags() -> Array:
+	return _sorted_tags(picker_tags)
+
+
+## Every tag the books themselves have (not just those the Tag picker offers),
+## sorted, each once (ignoring case).
+func book_tags() -> Array:
+	return _sorted_tags(func(b): return b.get("tags", []))
+
+
+func _sorted_tags(tags_of: Callable) -> Array:
 	var all := []
 	for b in books:
-		all.append_array(picker_tags(b))
+		all.append_array(tags_of.call(b))
 	var out := clean_tags(all)
 	out.sort_custom(func(a, c): return a.naturalnocasecmp_to(c) < 0)
 	return out
+
+
+## Tags from `all` that complete what's been typed so far, ignoring case: those
+## starting with it first, then those with a word starting with it, then those
+## containing it. Skips tags in `have` and the typed tag itself once it's
+## complete. With nothing typed, every tag not in `have`.
+static func match_tags(all: Array, have: Array, typed: String) -> Array:
+	var low := typed.strip_edges().to_lower()
+	var skip := {}
+	for t in have:
+		skip[str(t).to_lower()] = true
+	var ranked := [[], [], []]
+	for t in all:
+		var tag := str(t)
+		var lt := tag.to_lower()
+		if skip.has(lt) or tag == typed.strip_edges():
+			continue
+		if low == "" or lt.begins_with(low):
+			ranked[0].append(tag)
+		elif (" " + lt).contains(" " + low) or ("-" + lt).contains("-" + low):
+			ranked[1].append(tag)
+		elif lt.contains(low):
+			ranked[2].append(tag)
+	return ranked[0] + ranked[1] + ranked[2]
 
 
 # --- import ------------------------------------------------------------------
