@@ -38,6 +38,7 @@ func _ready() -> void:
 	add_child(_menu)
 	Library.changed.connect(func(): _dirty = true; _rebuild_soon())
 	Plugins.changed.connect(func(): if visible: _rebuild())
+	Settings.changed.connect(func(k): if k == "tag_aliases" and visible: _rebuild())
 
 
 ## Rebuilds at the end of the frame, once however many books changed (a sync
@@ -191,7 +192,7 @@ func _filters_active() -> bool:
 
 ## Opens the library showing every book with a tag (from a tag on a book's Details tab).
 func show_tag(tag: String) -> void:
-	_tag = tag
+	_tag = Library.main_tag(tag)
 	tab = ALL_TAB
 	_filter_text = ""
 	_source = ""

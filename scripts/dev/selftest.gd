@@ -13,6 +13,7 @@ func _ready() -> void:
 	_stretch()
 	_book_search()
 	_sites()
+	_tag_suggest()
 	_versions()
 	_sync_password()
 	_app_log()
@@ -74,6 +75,21 @@ func _app_log() -> void:
 	check("logs can be deleted", AppLog.files().size(), 0)
 
 
+func _tag_suggest() -> void:
+	check("typed index before the comma", TagSuggest.typed_index("Fan, Fi", 2), 0)
+	check("typed index after the comma", TagSuggest.typed_index("Fan, Fi", 5), 1)
+	check("typed index of an empty field", TagSuggest.typed_index("", 0), 0)
+	check("typed tag", TagSuggest.typed_now("Fan", 3, true, false), "Fan")
+	check("typed tag at the caret", TagSuggest.typed_now("Fan, Fi", 2, true, false), "Fan")
+	check("typed tag in the second tag", TagSuggest.typed_now("Fan, Fi", 6, true, false), "Fi")
+	check("nothing typed when not typing", TagSuggest.typed_now("Fan", 3, false, false), "")
+	check("single tag typed whole", TagSuggest.typed_now(" Fa ", 4, true, true), "Fa")
+	check("single tag completes whole", TagSuggest.completed_text("Fa", 2, "Fantasy", true, true), ["Fantasy", 7])
+	check("tag completed with room for the next", TagSuggest.completed_text("Fan", 3, "Fantasy", true, false), ["Fantasy, ", 9])
+	check("tag completed in the middle", TagSuggest.completed_text("Fan, Later", 3, "Fantasy", true, false), ["Fantasy, Later", 9])
+	check("tag added when nothing typed", TagSuggest.completed_text("Fantasy", 7, "Sci-fi", false, false), ["Fantasy, Sci-fi, ", 17])
+
+
 func _versions() -> void:
 	var n := func(a, b): return UpdateCheck.newer(a, b)
 	check("v0.3.0 is newer than 0.2.6", n.call("v0.3.0", "0.2.6"), true)
@@ -130,6 +146,24 @@ func _sites() -> void:
 	check("tag matches skip a finished tag", Library.match_tags(known, [], "Finished"), [])
 	check("tag match offers the right case", Library.match_tags(known, [], "finished"), ["Finished"])
 	check("no typing matches every new tag", Library.match_tags(known, ["LitRPG"], "").size(), 5)
+	var groups := Library.clean_aliases([
+		{"tag": "Water", "aliases": "Hot water, Cold water"},
+		{"tag": "   ", "aliases": ["Nothing"]},
+		{"tag": "WATER", "aliases": ["Tap water"]},
+		{"tag": "Tea", "aliases": ["Tea", "Water", "hot water", "Green tea"]},
+		"junk",
+		{"aliases": ["No main here"]},
+		{"tag": "Coffee", "aliases": "Espresso, Latte, espresso "},
+	])
+	check("aliases cleaned from comma text", groups, [
+		{"tag": "Water", "aliases": ["Hot water", "Cold water"]},
+		{"tag": "Tea", "aliases": ["Green tea"]},
+		{"tag": "Coffee", "aliases": ["Espresso", "Latte"]},
+	])
+	check("alias maps to its main tag ignoring case", Library.resolve_tag(groups, "HOT water"), "Water")
+	check("alias of a later group maps too", Library.resolve_tag(groups, "green TEA"), "Tea")
+	check("main tag unchanged", Library.resolve_tag(groups, "Water"), "Water")
+	check("unknown tag unchanged", Library.resolve_tag(groups, "Soda"), "Soda")
 	check("page script builds", WebExtract.script().contains("function register("), true)
 	_site_rules()
 	_bookmarks()
