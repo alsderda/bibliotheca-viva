@@ -106,7 +106,7 @@ func _fill_suggestions() -> void:
 	if _typing:
 		typed = parts[_typed_at()].strip_edges()
 		parts.remove_at(_typed_at())
-	_matches = Library.match_tags(Library.all_tags(), Library.clean_tags(Array(parts)), typed).slice(0, 12)
+	_matches = Library.match_tags(Library.book_tags(), Library.clean_tags(Array(parts)), typed).slice(0, 12)
 	if not _matches.is_empty():
 		var hint := "Add:" if typed == "" else ("Matches:" if OS.has_feature("mobile") else "Tab to complete:")
 		_suggest.add_child(UI.label(hint, "Small"))

@@ -523,9 +523,19 @@ func picker_tags(book: Dictionary) -> Array:
 
 ## Every tag the Tag picker offers, sorted, each once (ignoring case).
 func all_tags() -> Array:
+	return _sorted_tags(picker_tags)
+
+
+## Every tag the books themselves have (not just those the Tag picker offers),
+## sorted, each once (ignoring case).
+func book_tags() -> Array:
+	return _sorted_tags(func(b): return b.get("tags", []))
+
+
+func _sorted_tags(tags_of: Callable) -> Array:
 	var all := []
 	for b in books:
-		all.append_array(picker_tags(b))
+		all.append_array(tags_of.call(b))
 	var out := clean_tags(all)
 	out.sort_custom(func(a, c): return a.naturalnocasecmp_to(c) < 0)
 	return out
