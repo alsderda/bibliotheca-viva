@@ -16,6 +16,8 @@ extends Node
 ##   modified (last local change to anything but progress and bookmarks), sync_key (see Sync),
 ##   text_stamp (unix time chapter text was last saved or moved, see Sync),
 ##   dropped (true: the reader gave up on it; cleared when it's opened again, see set_dropped),
+##   archived (true: put away; only the library's Archive tab shows it, and Favorites if it's a favorite, see set_archived),
+##   favorite (true: also shown in the library's Favorites tab, see set_favorite),
 ##   bookmarks: [{id, chapter, paragraph, name, text, created, modified, deleted}] (see add_bookmark)
 
 signal changed
@@ -107,11 +109,11 @@ static func book_key(url: String) -> String:
 	return url.to_lower().replace("https://", "").replace("http://", "").replace("www.", "").trim_suffix("/")
 
 
-## The most recently read book that isn't dropped.
+## The most recently read book that isn't dropped or archived.
 func last_read() -> Dictionary:
 	var best := {}
 	for b in books:
-		if b.get("last_read", 0) > 0 and not b.get("dropped", false) and (best.is_empty() or b.last_read > best.last_read):
+		if b.get("last_read", 0) > 0 and not b.get("dropped", false) and not b.get("archived", false) and (best.is_empty() or b.last_read > best.last_read):
 			best = b
 	return best
 
@@ -129,9 +131,9 @@ func is_finished(book: Dictionary) -> bool:
 	return n > 0 and book.get("last_read", 0) > 0 and book.progress.chapter >= n - 1
 
 
-## Started, not finished and not dropped: what the library's Reading tab shows.
+## Started and not finished, dropped or archived: what the library's Reading tab shows.
 func is_reading(book: Dictionary) -> bool:
-	return book.get("last_read", 0) > 0 and not book.get("dropped", false) and not is_finished(book)
+	return book.get("last_read", 0) > 0 and not book.get("dropped", false) and not book.get("archived", false) and not is_finished(book)
 
 
 # --- mutations ---------------------------------------------------------------
@@ -196,6 +198,34 @@ func set_dropped(id: String, dropped: bool) -> void:
 	var b := get_book(id)
 	if not b.is_empty() and b.get("dropped", false) != dropped:
 		update_book(id, {"dropped": dropped})
+
+
+## Archiving takes a book out of the library's Reading, All, Ebooks and Web
+## serials tabs and out of "continue reading" (last_read); the Archive tab shows
+## it, and Favorites still does if it's a favorite: a favorite you reread now and
+## then without wanting it in Reading every time. Unlike dropped, opening the book
+## doesn't undo it; only set_archived(id, false) does. Changes `modified`, so sync
+## carries it.
+func set_archived(id: String, archived: bool) -> void:
+	var b := get_book(id)
+	if not b.is_empty() and b.get("archived", false) != archived:
+		update_book(id, {"archived": archived})
+
+
+## A favorite shows in the library's Favorites tab as well as in its usual tabs,
+## archived or not. Changes `modified`, so sync carries it.
+func set_favorite(id: String, favorite: bool) -> void:
+	var b := get_book(id)
+	if not b.is_empty() and b.get("favorite", false) != favorite:
+		update_book(id, {"favorite": favorite})
+
+
+static func is_archived(book: Dictionary) -> bool:
+	return book.get("archived", false)
+
+
+static func is_favorite(book: Dictionary) -> bool:
+	return book.get("favorite", false)
 
 
 # --- bookmarks ---------------------------------------------------------------

@@ -1050,6 +1050,10 @@ func _build_details() -> void:
 		chips.add_child(UI.chip("Dropped", UiTheme.BAD))
 	elif Library.is_finished(book):
 		chips.add_child(UI.chip("Finished", UiTheme.GOOD))
+	if Library.is_favorite(book):
+		chips.add_child(UI.chip("Favorite", UiTheme.ACCENT))
+	if Library.is_archived(book):
+		chips.add_child(UI.chip("Archived", UiTheme.MUTED))
 	for tag in book.get("tags", []):
 		var tb := UI.button(tag, "", "ChipButton", func(): main.pages.library.show_tag(tag), UiTheme.MUTED)
 		tb.tooltip_text = "Show the books tagged “%s”" % tag
@@ -1098,6 +1102,16 @@ func _build_details() -> void:
 		var more := UI.button("Add chapters from EPUB", "import", "", _pick_epub)
 		more.tooltip_text = "Add the new chapters of a later EPUB of this book to its end, e.g. the latest chapters of a serial. Chapters it already has are skipped."
 		buttons.add_child(more)
+	var favorite: bool = Library.is_favorite(book)
+	var fav := UI.button("Unfavorite" if favorite else "Favorite", "star_fill" if favorite else "star", "", _toggle_favorite)
+	fav.tooltip_text = "Remove this book from the Favorites tab" if favorite \
+		else "Also show this book in the library's Favorites tab"
+	buttons.add_child(fav)
+	var archived: bool = Library.is_archived(book)
+	var arch := UI.button("Unarchive" if archived else "Archive", "archive", "", _toggle_archived)
+	arch.tooltip_text = "Put this book back in the library's other tabs" if archived \
+		else "Move this book to the library's Archive tab, out of Reading and the other tabs (a favorite stays in Favorites)"
+	buttons.add_child(arch)
 	var dropped: bool = book.get("dropped", false)
 	var drop := UI.button("Undo drop" if dropped else "Mark as dropped", "refresh" if dropped else "x", "", _toggle_dropped)
 	drop.tooltip_text = "Show this book in the Reading tab again" if dropped \
@@ -1159,6 +1173,22 @@ func _toggle_dropped() -> void:
 	book = Library.get_book(book.id)
 	_build_details()
 	main.toast("Marked as dropped" if dropped else "Back in your Reading list", "ok")
+
+
+func _toggle_favorite() -> void:
+	var favorite: bool = not Library.is_favorite(book)
+	Library.set_favorite(book.id, favorite)
+	book = Library.get_book(book.id)
+	_build_details()
+	main.toast("Added to favorites" if favorite else "Removed from favorites", "ok")
+
+
+func _toggle_archived() -> void:
+	var archived: bool = not Library.is_archived(book)
+	Library.set_archived(book.id, archived)
+	book = Library.get_book(book.id)
+	_build_details()
+	main.toast("Archived. Find it in the library's Archive tab" if archived else "Back in your library", "ok")
 
 
 func _confirm_delete() -> void:

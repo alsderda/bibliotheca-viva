@@ -762,6 +762,7 @@ func _create_book(key: String, e: Dictionary, entries: Array) -> Dictionary:
 		"cover_url": e.get("cover_url", ""), "synopsis": e.get("synopsis", ""), "tags": e.get("tags", []),
 		"extra": e.get("extra", {}), "rss_only": e.get("rss_only", false), "chapters": chapters,
 		"total_words": int(e.get("total_words", 0)), "dropped": bool(e.get("dropped", false)),
+		"archived": bool(e.get("archived", false)), "favorite": bool(e.get("favorite", false)),
 		"added": float(e.get("added", 0)), "last_checked": float(e.get("last_checked", 0)), "modified": float(e.modified),
 	})
 
@@ -787,7 +788,7 @@ func _update_book(local: Dictionary, e: Dictionary, entries: Array) -> void:
 			list_changed = true
 	var fields := {"modified": stamp}
 	if remote_newer:
-		for f in ["title", "author", "synopsis", "tags", "extra", "cover_url", "rss_only", "url", "source", "kind", "total_words", "dropped"]:
+		for f in ["title", "author", "synopsis", "tags", "extra", "cover_url", "rss_only", "url", "source", "kind", "total_words", "dropped", "archived", "favorite"]:
 			if e.has(f):
 				fields[f] = e[f]
 	else:
@@ -984,6 +985,10 @@ func _book_file(b: Dictionary, flags: String) -> Dictionary:
 		out.total_words = int(b.total_words)
 	if b.has("dropped"):  # only once ever set, likewise
 		out.dropped = bool(b.dropped)
+	if b.has("archived"):
+		out.archived = bool(b.archived)
+	if b.has("favorite"):
+		out.favorite = bool(b.favorite)
 	return out
 
 
