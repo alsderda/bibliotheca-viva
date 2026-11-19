@@ -19,6 +19,8 @@ func _ready() -> void:
 	_sync_password()
 	_app_log()
 	await _word_counts()
+	await _tab_strip()
+	await _search_box()
 	await _fetch_manager()
 	await _pacing()
 	print("SELFTEST ", "PASSED" if failures == 0 else "FAILED (%d)" % failures)
@@ -393,6 +395,108 @@ func _word_counts() -> void:
 	check("short count", [ReaderPage._short_count(950), ReaderPage._short_count(8400), ReaderPage._short_count(84321), ReaderPage._short_count(1200000)], ["950", "8.4k", "84k", "1.2M"])
 	check("grouped count", ReaderPage._grouped(1234567), "1,234,567")
 	Library.remove_book(b.id, false)
+
+
+## The tab strip scrolls sideways when it doesn't fit, with a chevron and a fade
+## floating over each clipped edge; it reports which tab was picked, centres a
+## far picked tab, and reports how far the row overflows.
+func _tab_strip() -> void:
+	var names := PackedStringArray(["Reading", "All", "Ebooks", "Web serials", "Favorites", "Archive", "Extra long tab name", "Another very long tab"])
+	var picked: Array = []
+	var strip := TabStrip.new(names, 0, func(i: int): picked.append(i), false)
+	# Deferred: the self-test itself runs inside the main scene's setup.
+	get_tree().root.call_deferred("add_child", strip)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	strip.position = Vector2.ZERO
+	strip.size = Vector2(300, 48)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var sc := strip.find_children("*", "ScrollContainer", true, false)[0] as ScrollContainer
+	var bar := sc.get_h_scroll_bar()
+	check("tab strip minimum width stays small", strip.get_combined_minimum_size().x < 100.0, true)
+	check("tab strip overflows narrow", bar.max_value > bar.page, true)
+	check("tab strip overflow positive narrow", strip.overflow() > 0.0, true)
+	check("tab strip shows right chevron", _tab_chev(strip, "right").visible, true)
+	check("tab strip hides left chevron at start", _tab_chev(strip, "left").visible, false)
+	# Mid-scroll both chevrons show, floating over the row inside the strip.
+	strip.scroll_offset = (bar.max_value - bar.page) * 0.5
+	await get_tree().process_frame
+	var area := strip.get_global_rect()
+	check("tab strip shows left chevron mid-scroll", _tab_chev(strip, "left").visible, true)
+	check("tab strip shows right chevron mid-scroll", _tab_chev(strip, "right").visible, true)
+	check("tab strip left chevron overlays the strip", area.encloses(_tab_chev(strip, "left").get_global_rect()), true)
+	check("tab strip right chevron overlays the strip", area.encloses(_tab_chev(strip, "right").get_global_rect()), true)
+	strip.scroll_offset = 100000.0
+	await get_tree().process_frame
+	await get_tree().process_frame
+	check("tab strip restores its scroll", strip.scroll_offset >= bar.max_value - bar.page - 1.0, true)
+	check("tab strip shows left chevron at end", _tab_chev(strip, "left").visible, true)
+	check("tab strip hides right chevron at end", _tab_chev(strip, "right").visible, false)
+	strip.size = Vector2(3000, 48)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	check("tab strip wide hides left chevron", _tab_chev(strip, "left").visible, false)
+	check("tab strip wide hides right chevron", _tab_chev(strip, "right").visible, false)
+	check("tab strip overflow negative wide", strip.overflow() < 0.0, true)
+	check("tab strip has every button", strip.buttons().size(), 8)
+	strip.buttons()[3].pressed.emit()
+	check("tab strip reports its index", picked, [3])
+	strip.queue_free()
+
+	# A strip built with a far tab picked centres it, clear of both overlays.
+	var far := TabStrip.new(names, 6, func(_i: int): pass, false)
+	far.size = Vector2(300, 48)
+	get_tree().root.add_child(far)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var fsc := far.find_children("*", "ScrollContainer", true, false)[0] as ScrollContainer
+	var fbar := fsc.get_h_scroll_bar()
+	var fb := far.buttons()[6]
+	var fw := (far.find_children("*", "TextureRect", true, false)[0] as Control).size.x
+	var want := clampf(fb.position.x + fb.size.x * 0.5 - fsc.size.x * 0.5, 0.0, fbar.max_value - fbar.page)
+	check("tab strip centres the picked tab", absf(float(fsc.scroll_horizontal) - want) <= 2.0, true)
+	check("tab strip picked tab clear of left overlay", fb.position.x >= fsc.scroll_horizontal + fw - 1.0, true)
+	check("tab strip picked tab clear of right overlay", fb.position.x + fb.size.x <= fsc.scroll_horizontal + fsc.size.x - fw + 1.0, true)
+
+	# Restoring a scroll that already shows the picked tab clear keeps it.
+	var kept := TabStrip.new(names, 6, func(_i: int): pass, false)
+	kept.scroll_offset = float(fsc.scroll_horizontal)
+	kept.size = Vector2(300, 48)
+	get_tree().root.add_child(kept)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	check("tab strip keeps a clear restored scroll", absf(kept.scroll_offset - float(fsc.scroll_horizontal)) <= 1.0, true)
+	kept.queue_free()
+	far.queue_free()
+
+
+## A search box shrinks to an icon only while empty, and grows back to type in.
+func _search_box() -> void:
+	var box := SearchBox.new("Filter books", 220.0)
+	check("search box starts expanded", [box.collapsed, box.field.visible, box.button.visible], [false, true, false])
+	box.collapsed = true
+	check("search box collapsed shows only the button", [box.field.visible, box.button.visible], [false, true])
+	box.field.text = "typed"
+	check("search box with text can't collapse", box.can_collapse(), false)
+	box.field.text = ""
+	box.collapsed = true
+	# Deferred: the self-test itself runs inside the main scene's setup.
+	get_tree().root.call_deferred("add_child", box)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	box.button.pressed.emit()
+	check("search box button expands it", [box.collapsed, box.field.visible], [false, true])
+	check("search box grow cost is positive", box.grow_cost() > 0.0, true)
+	box.queue_free()
+
+
+func _tab_chev(strip: TabStrip, side: String) -> Button:
+	for n in strip.find_children("*", "Button", true, false):
+		var b := n as Button
+		if b != null and b.tooltip_text == "Scroll tabs " + side:
+			return b
+	return null
 
 
 ## Archived books leave the Reading tab and continue reading until unarchived;
