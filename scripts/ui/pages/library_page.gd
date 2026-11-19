@@ -55,6 +55,7 @@ func _ready() -> void:
 	Library.changed.connect(func(): _dirty = true; _rebuild_soon())
 	Plugins.changed.connect(func(): if visible: _rebuild())
 	Settings.changed.connect(func(k): if k == "tag_aliases" and visible: _rebuild())
+	Settings.changed.connect(func(k): if (k == "library_sort" or k == "library_sort_desc") and visible: _rebuild_soon())
 	Settings.changed.connect(func(k): if k == "library_cover_size" and visible: _relayout_soon())
 
 
@@ -138,10 +139,16 @@ func _rebuild() -> void:
 		_content.add_child(_hero(_most_recent(books)))
 
 	var header := UI.hbox(10)
-	header.add_child(UI.label("All books" if tab == ALL_TAB else FILTERS[tab], "H2"))
+	var heading := UI.hbox(10)  # its own row, so the count stays on the title's baseline
+	heading.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	heading.add_child(UI.label("All books" if tab == ALL_TAB else FILTERS[tab], "H2"))
 	var count := UI.label(str(books.size()), "Muted")
 	count.size_flags_vertical = Control.SIZE_SHRINK_END
-	header.add_child(count)
+	heading.add_child(count)
+	header.add_child(heading)
+	header.add_child(UI.spacer())
+	header.add_child(_sort_pick())
+	header.add_child(_sort_dir_button())
 	_content.add_child(header)
 	if not compact or _show_filters or _filters_active():
 		var row := _filter_row()
@@ -273,7 +280,7 @@ func _filtered() -> Array:
 		if not _plugin_filters.is_empty() and not _plugin_match(b):
 			continue
 		out.append(b)
-	out.sort_custom(func(a, c): return max(a.last_read, a.added) > max(c.last_read, c.added))
+	BookSort.sort(out, _sort_key(), bool(Settings.get_value("library_sort_desc")))
 	return out
 
 
@@ -284,8 +291,45 @@ func _archive_hides(book: Dictionary) -> bool:
 	return Library.is_archived(book) and tab != ARCHIVE_TAB and tab != FAVORITES_TAB
 
 
-## The most recently read of books (the list is sorted by read or added, so the
-## first one may only have been added recently).
+## The stored sort key, "recent" for anything unexpected.
+func _sort_key() -> String:
+	var key := str(Settings.get_value("library_sort"))
+	return key if BookSort.ORDERS.has(key) else "recent"
+
+
+func _sort_pick() -> Control:
+	var keys := BookSort.ORDERS.keys()
+	var pick := Picker.new()
+	pick.focus_mode = Control.FOCUS_NONE
+	pick.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	for k in keys:
+		pick.add_item("Sort: %s" % BookSort.ORDERS[k] if not compact else str(BookSort.ORDERS[k]))
+	pick.select(keys.find(_sort_key()))
+	pick.item_selected.connect(func(i: int): _on_sort_key(str(keys[i])))
+	return pick
+
+
+func _sort_dir_button() -> Control:
+	var desc := bool(Settings.get_value("library_sort_desc"))
+	var b := UI.icon_button("sort_desc" if desc else "sort_asc",
+		"Descending: press for ascending" if desc else "Ascending: press for descending",
+		_on_sort_dir)
+	b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	return b
+
+
+## Picking a key also resets the direction to that key's usual one; the
+## Settings.changed hook above does the rebuild, so a synced change re-sorts too.
+func _on_sort_key(key: String) -> void:
+	Settings.set_value("library_sort", key)
+	Settings.set_value("library_sort_desc", BookSort.default_descending(key))
+
+
+func _on_sort_dir() -> void:
+	Settings.set_value("library_sort_desc", not bool(Settings.get_value("library_sort_desc")))
+
+
+## The most recently read of the given books, whatever the grid's sort order is.
 static func _most_recent(books: Array) -> Dictionary:
 	var best: Dictionary = books[0]
 	for b in books:

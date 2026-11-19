@@ -15,6 +15,7 @@ func _ready() -> void:
 	_sites()
 	_tag_suggest()
 	_picker()
+	_library_sort()
 	_versions()
 	_updates_filters()
 	_sync_password()
@@ -537,6 +538,63 @@ func _archive_favorite() -> void:
 	Library.set_favorite(b.id, false)
 	check("unfavorited", Library.is_favorite(Library.get_book(b.id)), false)
 	Library.remove_book(b.id, false)
+
+
+func _library_sort() -> void:
+	var books := [
+		{"id": "s1", "title": "C Zeta", "author": "Bob", "added": 100.0, "last_read": 500.0, "text_stamp": 110.0, "total_words": 3000,
+			"chapters": [{"title": "A", "url": "https://example.com/s1/1", "date": 10.0, "words": 1000}, {"title": "B", "url": "https://example.com/s1/2", "date": 50.0, "words": 2000}]},
+		{"id": "s2", "title": "A Alpha", "author": "Zed", "added": 200.0, "last_read": 100.0, "text_stamp": 210.0, "total_words": 0,
+			"chapters": [{"title": "A", "url": "https://example.com/s2/1", "date": 300.0, "words": 400}, {"title": "B", "url": "https://example.com/s2/2", "date": 20.0, "words": 100}]},
+		{"id": "s3", "title": "B Middle", "author": "Amy", "added": 300.0, "last_read": 900.0, "text_stamp": 900.0, "total_words": 100,
+			"chapters": [{"title": "A", "url": "https://example.com/s3/1", "date": 0.0}, {"title": "B", "url": "https://example.com/s3/2", "date": 0.0, "words": 50}]},
+	]
+	var order := func(key: String, descending: bool) -> Array:
+		var copy: Array = books.duplicate()
+		BookSort.sort(copy, key, descending)
+		return copy.map(func(b): return b.get("id", ""))
+	check("sort by recent, newest first", order.call("recent", true), ["s3", "s1", "s2"])
+	check("sort by recent, oldest first", order.call("recent", false), ["s2", "s1", "s3"])
+	check("sort by date added, newest first", order.call("added", true), ["s3", "s2", "s1"])
+	check("sort by date added, oldest first", order.call("added", false), ["s1", "s2", "s3"])
+	check("sort by updated, newest first", order.call("updated", true), ["s3", "s2", "s1"])
+	check("sort by updated, oldest first", order.call("updated", false), ["s1", "s2", "s3"])
+	check("sort by word count, longest first", order.call("words", true), ["s1", "s2", "s3"])
+	check("sort by word count, shortest first", order.call("words", false), ["s3", "s2", "s1"])
+	check("sort by title, A to Z", order.call("title", false), ["s2", "s3", "s1"])
+	check("sort by title, Z to A", order.call("title", true), ["s1", "s3", "s2"])
+	check("sort by author, A to Z", order.call("author", false), ["s3", "s1", "s2"])
+	check("sort by author, Z to A", order.call("author", true), ["s2", "s1", "s3"])
+	check("updated uses the newest chapter date", BookSort.value(books[0], "updated"), 50.0)
+	check("updated falls back without chapter dates", BookSort.value(books[2], "updated"), 900.0)
+	check("words use the site count", BookSort.value(books[0], "words"), 3000.0)
+	check("words add up saved chapters", BookSort.value(books[1], "words"), 500)
+	var ties := [
+		{"id": "t1", "title": "Zebra", "author": "A", "added": 10.0, "last_read": 0.0, "text_stamp": 0.0, "total_words": 0, "chapters": []},
+		{"id": "t2", "title": "apple", "author": "B", "added": 10.0, "last_read": 0.0, "text_stamp": 0.0, "total_words": 0, "chapters": []},
+	]
+	var tied := func(descending: bool) -> Array:
+		var copy: Array = ties.duplicate()
+		BookSort.sort(copy, "added", descending)
+		return copy.map(func(b): return b.get("id", ""))
+	check("ties fall back to title A to Z", tied.call(false), ["t2", "t1"])
+	check("ties stay A to Z, newest first", tied.call(true), ["t2", "t1"])
+	var numbered := [
+		{"id": "n1", "title": "Book 10", "author": "A", "added": 1.0, "last_read": 0.0, "text_stamp": 0.0, "total_words": 0, "chapters": []},
+		{"id": "n2", "title": "book 2", "author": "B", "added": 2.0, "last_read": 0.0, "text_stamp": 0.0, "total_words": 0, "chapters": []},
+		{"id": "n3", "title": "apple", "author": "C", "added": 3.0, "last_read": 0.0, "text_stamp": 0.0, "total_words": 0, "chapters": []},
+		{"id": "n4", "title": "Banana", "author": "D", "added": 4.0, "last_read": 0.0, "text_stamp": 0.0, "total_words": 0, "chapters": []},
+	]
+	var by_title := func(descending: bool) -> Array:
+		var copy: Array = numbered.duplicate()
+		BookSort.sort(copy, "title", descending)
+		return copy.map(func(b): return b.get("id", ""))
+	check("titles sort naturally, ignoring case", by_title.call(false), ["n3", "n4", "n2", "n1"])
+	check("titles sort Z to A", by_title.call(true), ["n1", "n2", "n4", "n3"])
+	check("unknown key sorts like recent, newest first", order.call("bogus", true), order.call("recent", true))
+	check("unknown key sorts like recent, oldest first", order.call("bogus", false), order.call("recent", false))
+	for k in BookSort.ORDERS:
+		check("default direction of " + k, BookSort.default_descending(k), k != "title" and k != "author")
 
 
 ## Named bookmarks at paragraphs of a book, and merging them in sync.
