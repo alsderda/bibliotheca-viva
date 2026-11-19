@@ -6,6 +6,12 @@ signal open_requested(id: String)
 signal menu_requested(id: String, at: Vector2)
 
 var book_id := ""
+var _card_w := 0.0
+var _col: VBoxContainer
+var _cover_box: Control
+var _badge: PanelContainer
+var _title: Label
+var _author: Label
 
 
 func setup(book: Dictionary, width := 168.0) -> void:
@@ -13,41 +19,35 @@ func setup(book: Dictionary, width := 168.0) -> void:
 	flat = true
 	focus_mode = Control.FOCUS_NONE
 	mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	custom_minimum_size = Vector2(width, 0)
 	for s in ["normal", "hover", "pressed", "hover_pressed", "focus"]:
 		add_theme_stylebox_override(s, StyleBoxEmpty.new())
-	var col := UI.vbox(6)
-	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	col.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	col.custom_minimum_size.x = width
+	_col = UI.vbox(6)
+	_col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_col.set_anchors_preset(Control.PRESET_TOP_WIDE)
 
-	var cover_box := Control.new()
-	cover_box.custom_minimum_size = Vector2(width, width * 1.5)
-	cover_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_cover_box = Control.new()
+	_cover_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var cover := CoverView.new()
 	cover.set_anchors_preset(Control.PRESET_FULL_RECT)
 	cover.radius = 10
 	cover.set_book(book)
-	cover_box.add_child(cover)
-	var badge := UI.panel("Badge", UI.label(_badge_text(book), "Small"))
-	badge.get_child(0).add_theme_color_override("font_color", Color(1, 1, 1, 0.9))
-	badge.position = Vector2(8, 8)
-	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	cover_box.add_child(badge)
-	col.add_child(cover_box)
+	_cover_box.add_child(cover)
+	_badge = UI.panel("Badge", UI.label(_badge_text(book), "Small"))
+	_badge.get_child(0).add_theme_color_override("font_color", Color(1, 1, 1, 0.9))
+	_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_cover_box.add_child(_badge)
+	_col.add_child(_cover_box)
 
-	var title := UI.label(book.title, "H3")
-	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	title.custom_minimum_size.x = width
-	title.add_theme_font_size_override("font_size", 14)
-	col.add_child(UI.margin(title, 2, 4, 2, 0))
-	var author := UI.label(book.author if book.author != "" else _source_name(book), "Small")
-	author.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	author.custom_minimum_size.x = width
-	col.add_child(UI.margin(author, 2, -4, 2, 0))
+	_title = UI.label(book.title, "H3")
+	_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_col.add_child(UI.margin(_title, 2, 4, 2, 0))
+	_author = UI.label(book.author if book.author != "" else _source_name(book), "Small")
+	_author.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_col.add_child(UI.margin(_author, 2, -4, 2, 0))
 
 	var ratio := Library.progress_ratio(book)
 	var prog_row := UI.hbox(8)
+	prog_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var bar := UI.progress(ratio, 3)
 	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -58,11 +58,28 @@ func setup(book: Dictionary, width := 168.0) -> void:
 		pct.add_theme_color_override("font_color", UiTheme.ACCENT)
 	prog_row.add_child(pct)
 	prog_row.tooltip_text = "%d chapters" % n
-	col.add_child(UI.margin(prog_row, 2, 0, 2, 0))
-	add_child(col)
-	custom_minimum_size.y = width * 1.5 + 86
+	_col.add_child(UI.margin(prog_row, 2, 0, 2, 0))
+	add_child(_col)
+	set_card_width(width)
 	pressed.connect(func(): open_requested.emit(book_id))
 	gui_input.connect(_on_input)
+
+
+## Resize without rebuilding: the grid calls this on every card when the
+## window size or cover-size setting changes the column width.
+func set_card_width(width: float) -> void:
+	if _col == null or width == _card_w:
+		return
+	_card_w = width
+	custom_minimum_size = Vector2(width, width * 1.5 + 86)
+	_col.custom_minimum_size.x = width
+	_cover_box.custom_minimum_size = Vector2(width, width * 1.5)
+	# The badge sits at a fixed offset over the cover, so it fits at any
+	# card size; it only moves in a little on the smallest cards.
+	_badge.position = Vector2(6, 6) if width < 110 else Vector2(8, 8)
+	_title.custom_minimum_size.x = width
+	_title.add_theme_font_size_override("font_size", 12 if width < 110 else 14)
+	_author.custom_minimum_size.x = width
 
 
 func _on_input(e: InputEvent) -> void:

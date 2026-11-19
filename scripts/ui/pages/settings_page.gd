@@ -236,6 +236,9 @@ func _reading() -> void:
 	prev.tree_exiting.connect(func(): Settings.changed.disconnect(restyle))
 	_content.add_child(UI.margin(UI.label("PREVIEW", "Overline"), 4, 8, 0, 0))
 	_content.add_child(prev)
+	_section("Library", [
+		_row("Cover size", "Size of the book covers in the Library. They stretch a little so each row fills the width.", _segmented("library_cover_size", [["large", "150%"], ["normal", "100%"], ["small", "67%"], ["smallest", "50%"]])),
+	])
 
 
 ## Shows the sample paragraphs as the reader would.
