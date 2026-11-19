@@ -9,6 +9,9 @@ const EBOOKS_TAB := 2
 const WEB_TAB := 3
 const FAVORITES_TAB := 4
 const ARCHIVE_TAB := 5
+## Settings "library_cover_size" -> scale of the cover width the grid aims for.
+## The grid then stretches or shrinks covers a little so the columns fill the width.
+const COVER_SIZES := {"large": 1.5, "normal": 1.0, "small": 2.0 / 3.0, "smallest": 0.5}
 
 var _filter_text := ""
 ## Book source to show ("" = all): a plugin id, "web" or "file".
@@ -19,6 +22,12 @@ var _plugin_filters := {}
 var _tag := ""
 var _show_filters := false  # phones: the filter row is opened from the top bar
 var _content: VBoxContainer
+var _scroll: ScrollContainer
+var _grid: GridContainer
+var _cards: Array[BookCard] = []
+var _cols := 0
+var _card_w := 0.0
+var _relayout_queued := false
 var _menu: PopupMenu
 var _menu_book := ""
 var _file_dialog: FileDialog
@@ -31,7 +40,10 @@ var _search: LineEdit
 
 func _ready() -> void:
 	_content = UI.vbox(28)
-	add_child(_full(UI.scroll(UI.margin(_content, 32, 28, 32, 40))))
+	_scroll = UI.scroll(UI.margin(_content, 32, 28, 32, 40))
+	add_child(_full(_scroll))
+	_scroll.resized.connect(_relayout_soon)
+	get_viewport().size_changed.connect(_relayout_soon)
 	_menu = PopupMenu.new()
 	_menu.add_item("Open", 0)
 	_menu.add_item("Edit details", 3)
@@ -43,6 +55,7 @@ func _ready() -> void:
 	Library.changed.connect(func(): _dirty = true; _rebuild_soon())
 	Plugins.changed.connect(func(): if visible: _rebuild())
 	Settings.changed.connect(func(k): if k == "tag_aliases" and visible: _rebuild())
+	Settings.changed.connect(func(k): if k == "library_cover_size" and visible: _relayout_soon())
 
 
 ## Rebuilds at the end of the frame, once however many books changed (a sync
@@ -117,6 +130,10 @@ func _rebuild() -> void:
 	if _content == null:
 		return
 	UI.clear(_content)
+	_grid = null
+	_cards.clear()
+	_cols = 0
+	_card_w = 0.0
 	var books := _filtered()
 	if Library.books.is_empty():
 		_content.add_child(_empty_state())
@@ -145,20 +162,94 @@ func _rebuild() -> void:
 			none = "Nothing archived. Books you archive from their Details tab move here, out of Reading and the other tabs. Favorites keep showing in Favorites."
 		_content.add_child(UI.label(none, "Muted", true))
 		return
-	var flow := HFlowContainer.new()
-	flow.add_theme_constant_override("h_separation", 16 if compact else 22)
-	flow.add_theme_constant_override("v_separation", 20)
-	var avail := get_viewport_rect().size.x - (32 if compact else 236 + 64)
-	var width := 168.0
-	if compact:
-		width = floor((avail - 32) / 2.0) if avail < 520 else 150.0
+	var layout := _grid_layout(_measure_width(), _grid_target(), _grid_gap())
+	_grid = GridContainer.new()
+	_grid.columns = layout[0]
+	_grid.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN  # keeps covers 2:3 when the page is wider than the window
+	_grid.add_theme_constant_override("h_separation", 16 if compact else 22)
+	_grid.add_theme_constant_override("v_separation", 20)
+	_cards.clear()
 	for b in books:
 		var card := BookCard.new()
-		card.setup(b, width)
+		card.setup(b, layout[1])
 		card.open_requested.connect(func(id): main.open_reader(id))
 		card.menu_requested.connect(_show_menu)
-		flow.add_child(card)
-	_content.add_child(flow)
+		_grid.add_child(card)
+		_cards.append(card)
+	_cols = layout[0]
+	_card_w = layout[1]
+	_content.add_child(_grid)
+	_relayout_soon()
+
+
+## Cover scale from the setting, 1.0 for anything unexpected.
+func _cover_scale() -> float:
+	return float(COVER_SIZES.get(str(Settings.get_value("library_cover_size")), 1.0))
+
+
+## Columns and card width that exactly fill w: pick the column count whose
+## ideal row (target + gap each) best matches, then split the width evenly.
+## Covers end up up to about half a column narrower or wider than the target.
+static func _grid_layout(w: float, target: float, gap: float) -> Array:
+	w = maxf(w, 1.0)
+	var n := maxi(1, roundi((w + gap) / (target + gap)))
+	return [n, floor((w - gap * float(n - 1)) / float(n))]
+
+
+func _grid_gap() -> float:
+	return 16.0 if compact else 22.0
+
+
+func _grid_target() -> float:
+	return (150.0 if compact else 168.0) * _cover_scale()
+
+
+## The width the grid actually gets: the scroller's width minus the content
+## margins, always reserving the vertical scrollbar's width so showing or
+## hiding it can't change the answer (that feedback loop would never settle).
+## Capped at the window's right edge: a wide top bar can stretch the page past
+## it on narrow windows, and the covers should still fit what you can see.
+func _measure_width() -> float:
+	if _scroll != null and _scroll.size.x > 0:
+		var m := _content.get_parent() as MarginContainer
+		var side := float(m.get_theme_constant("margin_left") + m.get_theme_constant("margin_right"))
+		var visible_w := minf(_scroll.size.x, get_viewport_rect().size.x - _scroll.global_position.x)
+		return visible_w - side - _scrollbar_reserve()
+	return get_viewport_rect().size.x - (32.0 if compact else 236.0 + 64.0)
+
+
+func _scrollbar_reserve() -> float:
+	var sb := _scroll.get_v_scroll_bar()
+	if sb == null:
+		return 0.0
+	if sb.visible and sb.size.x > 0:
+		return sb.size.x
+	return sb.get_combined_minimum_size().x
+
+
+## Recompute columns and card widths in place, without rebuilding the cards.
+## Runs deferred so the scroller has its real size; a no-op unless the
+## columns or width actually changed, so a resize settles after one pass.
+func _relayout_soon() -> void:
+	if _relayout_queued:
+		return
+	_relayout_queued = true
+	_relayout_now.call_deferred()
+
+
+func _relayout_now() -> void:
+	_relayout_queued = false
+	if not visible or _grid == null or not is_instance_valid(_grid):
+		return
+	var layout := _grid_layout(_measure_width(), _grid_target(), _grid_gap())
+	if layout[0] == _cols and layout[1] == _card_w:
+		return
+	_cols = layout[0]
+	_card_w = layout[1]
+	_grid.columns = _cols
+	for card in _cards:
+		if is_instance_valid(card):
+			card.set_card_width(_card_w)
 
 
 func _filtered() -> Array:

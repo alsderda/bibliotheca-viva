@@ -30,6 +30,7 @@ const DEFAULTS := {
 	"tts_highlight": "background",  # background | underline | color | none
 	"tts_preview_text": "This is how chapters will sound when read aloud.",
 	"library_view": "grid",
+	"library_cover_size": "normal", # large | normal | small | smallest, see LibraryPage.COVER_SIZES
 	"web_home": "https://duckduckgo.com/",
 	"web_last_url": "",
 	"web_auto_next": true,          # continue to the next chapter page when listening
@@ -52,6 +53,7 @@ const LOCAL_ONLY := [
 	"tts_voice", "web_last_url", "plugin_settings", "logging",
 	"reader_font", "font_size", "line_spacing", "paragraph_gap",
 	"column_width", "side_margin", "text_align", "first_line_indent",
+	"library_cover_size",
 ]
 
 const READER_THEMES := {
