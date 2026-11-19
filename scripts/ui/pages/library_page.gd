@@ -2,9 +2,13 @@ class_name LibraryPage
 extends Page
 ## Book grid with "continue reading" hero and filters in the top bar.
 
-const FILTERS := ["Reading", "All", "Ebooks", "Web serials"]
+const FILTERS := ["Reading", "All", "Ebooks", "Web serials", "Favorites", "Archive"]
 const READING_TAB := 0
 const ALL_TAB := 1
+const EBOOKS_TAB := 2
+const WEB_TAB := 3
+const FAVORITES_TAB := 4
+const ARCHIVE_TAB := 5
 
 var _filter_text := ""
 ## Book source to show ("" = all): a plugin id, "web" or "file".
@@ -135,6 +139,10 @@ func _rebuild() -> void:
 		var none := "Nothing here yet."
 		if tab == READING_TAB and _filter_text == "" and not _filters_active():
 			none = "No books in progress. Open one from All to start reading."
+		elif tab == FAVORITES_TAB and _filter_text == "" and not _filters_active():
+			none = "No favorites yet. Press Favorite on a book's Details tab to add it here."
+		elif tab == ARCHIVE_TAB and _filter_text == "" and not _filters_active():
+			none = "Nothing archived. Books you archive from their Details tab move here, out of Reading and the other tabs. Favorites keep showing in Favorites."
 		_content.add_child(UI.label(none, "Muted", true))
 		return
 	var flow := HFlowContainer.new()
@@ -156,13 +164,19 @@ func _rebuild() -> void:
 func _filtered() -> Array:
 	var out := []
 	for b in Library.books:
+		if _archive_hides(b):
+			continue
 		match tab:
 			READING_TAB:
 				if not Library.is_reading(b): continue
-			2:
+			EBOOKS_TAB:
 				if b.kind == "web": continue
-			3:
+			WEB_TAB:
 				if b.kind != "web": continue
+			FAVORITES_TAB:
+				if not Library.is_favorite(b): continue
+			ARCHIVE_TAB:
+				if not Library.is_archived(b): continue
 		if _filter_text != "" and not (_filter_text.to_lower() in (b.title + " " + b.author + " " + " ".join(PackedStringArray(b.get("tags", [])))).to_lower()):
 			continue
 		if _source != "" and b.source != _source:
@@ -174,6 +188,13 @@ func _filtered() -> Array:
 		out.append(b)
 	out.sort_custom(func(a, c): return max(a.last_read, a.added) > max(c.last_read, c.added))
 	return out
+
+
+## Archived books show only on the Archive tab, and on Favorites when they're
+## favorites: a favorite you reread now and then stays at hand without coming
+## back to Reading every time.
+func _archive_hides(book: Dictionary) -> bool:
+	return Library.is_archived(book) and tab != ARCHIVE_TAB and tab != FAVORITES_TAB
 
 
 ## The most recently read of books (the list is sorted by read or added, so the
@@ -215,6 +236,8 @@ func _plugin_match(book: Dictionary) -> bool:
 func _filter_row() -> Control:
 	var sources := {}
 	for b in Library.books:
+		if _archive_hides(b):
+			continue
 		sources[b.source] = true
 	var every := Library.all_tags()
 	if sources.size() < 2 and _source == "" and every.is_empty() and _tag == "":

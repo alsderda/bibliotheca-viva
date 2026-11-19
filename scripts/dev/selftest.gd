@@ -177,6 +177,7 @@ func _sites() -> void:
 	check("page script builds", WebExtract.script().contains("function register("), true)
 	_site_rules()
 	_bookmarks()
+	_archive_favorite()
 	_paragraph_bookmarks()
 	_storage()
 	print("  plugins loaded: ", ", ".join(Plugins.plugins.map(func(p): return p.id)))
@@ -391,6 +392,31 @@ func _word_counts() -> void:
 	check("saved words added up", Library.saved_words(b), {"words": 3, "chapters": 1})
 	check("short count", [ReaderPage._short_count(950), ReaderPage._short_count(8400), ReaderPage._short_count(84321), ReaderPage._short_count(1200000)], ["950", "8.4k", "84k", "1.2M"])
 	check("grouped count", ReaderPage._grouped(1234567), "1,234,567")
+	Library.remove_book(b.id, false)
+
+
+## Archived books leave the Reading tab and continue reading until unarchived;
+## favorites also show in the Favorites tab. Both flags sync like dropped.
+func _archive_favorite() -> void:
+	var b := Library.add_book({"title": "Archive test", "kind": "web", "url": "https://example.com/archtest",
+		"chapters": [{"title": "A", "url": "https://example.com/arch/1"}, {"title": "B", "url": "https://example.com/arch/2"}]})
+	Library.set_progress(b.id, 0, 1)
+	check("reading before archiving", Library.is_reading(Library.get_book(b.id)), true)
+	check("most recently read", Library.last_read().get("id", ""), b.id)
+	Library.set_archived(b.id, true)
+	check("archived", Library.is_archived(Library.get_book(b.id)), true)
+	check("archived book isn't reading", Library.is_reading(Library.get_book(b.id)), false)
+	check("archived book isn't continue reading", Library.last_read().get("id", "") != b.id, true)
+	Library.set_favorite(b.id, true)
+	var file: Dictionary = Sync._book_file(Library.get_book(b.id), "")
+	check("archived in the synced file", file.get("archived", false), true)
+	check("favorite in the synced file", file.get("favorite", false), true)
+	Library.set_archived(b.id, false)
+	check("unarchived", Library.is_archived(Library.get_book(b.id)), false)
+	check("favorite kept through the archive", Library.is_favorite(Library.get_book(b.id)), true)
+	check("reading again after unarchiving", Library.is_reading(Library.get_book(b.id)), true)
+	Library.set_favorite(b.id, false)
+	check("unfavorited", Library.is_favorite(Library.get_book(b.id)), false)
 	Library.remove_book(b.id, false)
 
 
