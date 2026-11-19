@@ -60,6 +60,8 @@ const PATHS := {
 	"star": "<path d='M12 2.5l2.95 5.98 6.6.96-4.78 4.66 1.13 6.58L12 17.57l-5.9 3.11 1.13-6.58L2.45 9.44l6.6-.96z'/>",
 	"star_fill": "<path d='M12 2.5l2.95 5.98 6.6.96-4.78 4.66 1.13 6.58L12 17.57l-5.9 3.11 1.13-6.58L2.45 9.44l6.6-.96z' fill='CLR'/>",
 	"archive": "<rect x='2' y='3' width='20' height='5' rx='1'/><path d='M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8'/><path d='M10 12h4'/>",
+	"sort_desc": "<path d='M3 6h10M3 12h7M3 18h4'/><path d='M18 4v16'/><path d='m14 16 4 4 4-4'/>",
+	"sort_asc": "<path d='M3 6h10M3 12h7M3 18h4'/><path d='M18 20V4'/><path d='m14 8 4-4 4 4'/>",
 }
 
 static var _cache := {}

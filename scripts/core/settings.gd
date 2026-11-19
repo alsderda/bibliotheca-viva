@@ -31,6 +31,8 @@ const DEFAULTS := {
 	"tts_preview_text": "This is how chapters will sound when read aloud.",
 	"library_view": "grid",
 	"library_cover_size": "normal", # large | normal | small | smallest, see LibraryPage.COVER_SIZES
+	"library_sort": "recent",       # see BookSort.ORDERS
+	"library_sort_desc": true,      # see BookSort.default_descending
 	"updates_hide_read": false,     # Updates → Latest leaves out chapters already read
 	"updates_hide_caught_up": false, # Updates → Following leaves out serials with no unread chapters
 	"web_home": "https://duckduckgo.com/",
