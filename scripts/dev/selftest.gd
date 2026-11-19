@@ -19,6 +19,7 @@ func _ready() -> void:
 	_sync_password()
 	_app_log()
 	await _word_counts()
+	await _tab_strip()
 	await _fetch_manager()
 	await _pacing()
 	print("SELFTEST ", "PASSED" if failures == 0 else "FAILED (%d)" % failures)
@@ -393,6 +394,63 @@ func _word_counts() -> void:
 	check("short count", [ReaderPage._short_count(950), ReaderPage._short_count(8400), ReaderPage._short_count(84321), ReaderPage._short_count(1200000)], ["950", "8.4k", "84k", "1.2M"])
 	check("grouped count", ReaderPage._grouped(1234567), "1,234,567")
 	Library.remove_book(b.id, false)
+
+
+## The tab strip scrolls sideways when it doesn't fit, with a chevron and a
+## fade on each clipped edge, and reports which tab was picked.
+func _tab_strip() -> void:
+	var names := PackedStringArray(["Reading", "All", "Ebooks", "Web serials", "Favorites", "Archive", "Extra long tab name", "Another very long tab"])
+	var picked: Array = []
+	var strip := TabStrip.new(names, 0, func(i: int): picked.append(i), false)
+	# Deferred: the self-test itself runs inside the main scene's setup.
+	get_tree().root.call_deferred("add_child", strip)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	strip.position = Vector2.ZERO
+	strip.size = Vector2(300, 48)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var sc := strip.find_children("*", "ScrollContainer", true, false)[0] as ScrollContainer
+	var bar := sc.get_h_scroll_bar()
+	check("tab strip minimum width stays small", strip.get_combined_minimum_size().x < 100.0, true)
+	check("tab strip overflows narrow", bar.max_value > bar.page, true)
+	check("tab strip shows right chevron", _tab_chev(strip, "right").visible, true)
+	check("tab strip hides left chevron at start", _tab_chev(strip, "left").visible, false)
+	strip.scroll_offset = 100000.0
+	await get_tree().process_frame
+	await get_tree().process_frame
+	check("tab strip restores its scroll", strip.scroll_offset >= bar.max_value - bar.page - 1.0, true)
+	check("tab strip shows left chevron at end", _tab_chev(strip, "left").visible, true)
+	check("tab strip hides right chevron at end", _tab_chev(strip, "right").visible, false)
+	strip.size = Vector2(3000, 48)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	check("tab strip wide hides left chevron", _tab_chev(strip, "left").visible, false)
+	check("tab strip wide hides right chevron", _tab_chev(strip, "right").visible, false)
+	check("tab strip has every button", strip.buttons().size(), 8)
+	strip.buttons()[3].pressed.emit()
+	check("tab strip reports its index", picked, [3])
+	strip.queue_free()
+
+	# A strip built with a far tab picked scrolls it into view by itself.
+	var far := TabStrip.new(names, 6, func(_i: int): pass, false)
+	far.size = Vector2(300, 48)
+	get_tree().root.add_child(far)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var fsc := far.find_children("*", "ScrollContainer", true, false)[0] as ScrollContainer
+	var fb := far.buttons()[6]
+	var shown := fb.position.x >= fsc.scroll_horizontal and fb.position.x + fb.size.x <= fsc.scroll_horizontal + fsc.size.x
+	check("tab strip scrolls to the picked tab", shown, true)
+	far.queue_free()
+
+
+func _tab_chev(strip: TabStrip, side: String) -> Button:
+	for n in strip.find_children("*", "Button", true, false):
+		var b := n as Button
+		if b != null and b.tooltip_text == "Scroll tabs " + side:
+			return b
+	return null
 
 
 ## Archived books leave the Reading tab and continue reading until unarchived;

@@ -26,6 +26,8 @@ var _bridge_row: VBoxContainer
 var _update_box: VBoxContainer
 var _topbar: PanelContainer
 var _top_rows: VBoxContainer
+var _tab_strip: TabStrip
+var _tab_strip_page: Page
 var _host: Control
 var _toast_box: VBoxContainer
 var _sidebar_style: StyleBoxFlat
@@ -785,6 +787,12 @@ func _rebuild_topbar() -> void:
 		focus = null
 	if focus:
 		_refocus.call_deferred(focus)
+	# The bar is rebuilt whenever the page's header changes (a filter, a tab),
+	# so carry the tabs' sideways scroll over or the row would jump back.
+	var tab_scroll := 0.0
+	if is_instance_valid(_tab_strip) and _tab_strip_page == current:
+		tab_scroll = _tab_strip.scroll_offset
+	_tab_strip = null
 	UI.clear(_top_rows)
 	_top_listen = null
 	var row := UI.hbox(14)
@@ -824,20 +832,11 @@ func _rebuild_topbar() -> void:
 		row.add_child(title)
 		title_ctl = title
 
-	var tabs_row := UI.hbox(22)
-	var group := ButtonGroup.new()
 	var names := current.tabs()
-	for i in names.size():
-		var b := Button.new()
-		b.text = names[i]
-		b.theme_type_variation = "TabButton"
-		b.toggle_mode = true
-		b.button_group = group
-		b.focus_mode = Control.FOCUS_NONE
-		b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-		b.button_pressed = i == current.tab
-		b.pressed.connect(func(): current.select_tab(i); _refresh_listening())
-		tabs_row.add_child(b)
+	if names.size() > 0:
+		_tab_strip = TabStrip.new(names, current.tab, func(i: int): current.select_tab(i); _refresh_listening(), compact)
+		_tab_strip.scroll_offset = tab_scroll
+		_tab_strip_page = current
 
 	var actions := UI.hbox(6)
 	actions.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -865,34 +864,24 @@ func _rebuild_topbar() -> void:
 			row.add_child(c)
 		actions.free()
 		_top_rows.add_child(row)
-		if names.size() > 0:
-			var sc := ScrollContainer.new()
-			sc.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-			sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
-			sc.add_child(tabs_row)
-			sc.custom_minimum_size.y = 48
-			# On phones the padding is the space between tabs, so each one is
-			# easy to tap. Every state gets the same padding: a button is sized
-			# for its normal box, so a wider selected box would clip its label.
-			tabs_row.add_theme_constant_override("separation", 0)
-			var styles := UiTheme.tab_styles(Vector4(12, 12, 12, 12))
-			for b: Button in tabs_row.get_children():
-				b.custom_minimum_size = Vector2(56, 48)
-				for state in styles:
-					b.add_theme_stylebox_override(state, styles[state])
-			_top_rows.add_child(sc)
+		if _tab_strip:
+			_top_rows.add_child(_tab_strip)
 		# A lone menu button up there looks lost, so the title joins it. With a
 		# back button (e.g. an open book) the buttons fill the strip well enough.
 		_place_top_row(row, title_ctl, not current.has_back())
 	else:
-		if names.size() > 0:
+		if _tab_strip:
 			var sep := ColorRect.new()
 			sep.color = UiTheme.BORDER
 			sep.custom_minimum_size = Vector2(1, 22)
 			sep.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 			row.add_child(sep)
-		row.add_child(tabs_row)
-		row.add_child(UI.spacer())
+			# The strip fills the gap up to the actions and scrolls when the
+			# window is too narrow for every tab, instead of pushing them off.
+			_tab_strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			row.add_child(_tab_strip)
+		else:
+			row.add_child(UI.spacer())
 		row.add_child(actions)
 		_top_rows.add_child(row)
 		_place_top_row(row, title_ctl)
