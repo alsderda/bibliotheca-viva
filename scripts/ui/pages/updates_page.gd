@@ -128,20 +128,54 @@ func _rebuild() -> void:
 		_following(books)
 
 
+static func is_unread(book: Dictionary, index: int) -> bool:
+	return index > book.progress.chapter or book.last_read == 0
+
+
+static func unread_count(book: Dictionary) -> int:
+	return maxi(0, book.chapters.size() - (book.progress.chapter + 1 if book.last_read > 0 else 0))
+
+
+func _filter_row(text: String, key: String, tip: String) -> Control:
+	var row := UI.hbox()
+	row.add_child(UI.spacer())
+	var c := CheckButton.new()
+	TipAbove.apply(c)
+	c.text = text
+	c.tooltip_text = tip
+	c.focus_mode = Control.FOCUS_NONE
+	c.button_pressed = bool(Settings.get_value(key))
+	c.add_theme_font_size_override("font_size", 13)
+	c.toggled.connect(func(v: bool):
+		Settings.set_value(key, v)
+		_rebuild.call_deferred())
+	row.add_child(c)
+	return row
+
+
 func _latest(books: Array) -> void:
+	_content.add_child(_filter_row("Hide read chapters", "updates_hide_read", "Leave out chapters you have already read."))
+	var hide: bool = bool(Settings.get_value("updates_hide_read"))
 	var entries: Array = []
 	for b in books:
 		var n: int = b.chapters.size()
 		for i in range(max(0, n - 6), n):
 			entries.append({"book": b, "index": i, "date": float(b.chapters[i].get("date", 0))})
 	entries.sort_custom(func(a, c): return a.date > c.date if a.date != c.date else a.index > c.index)
+	if hide:
+		entries = entries.filter(func(e): return is_unread(e.book, e.index))
 	var last_group := ""
+	var shown := 0
 	for e in entries.slice(0, 40):
 		var group := _group(e.date)
 		if group != last_group:
 			_content.add_child(UI.margin(UI.label(group.to_upper(), "Overline"), 12, 16 if last_group != "" else 0, 0, 6))
 			last_group = group
 		_content.add_child(_chapter_row(e.book, e.index, e.date))
+		shown += 1
+	if shown == 0 and hide:
+		_content.add_child(UI.label("You're all caught up", "H3"))
+		_content.add_child(UI.label("No unread chapters.", "Muted", true))
 
 
 func _group(date: float) -> String:
@@ -182,7 +216,7 @@ func _chapter_row(book: Dictionary, index: int, date: float) -> Control:
 	sub.custom_minimum_size.x = 80
 	info.add_child(sub)
 	row.add_child(info)
-	var unread: bool = index > book.progress.chapter or book.last_read == 0
+	var unread: bool = is_unread(book, index)
 	if unread:
 		row.add_child(UI.chip("Unread", UiTheme.ACCENT))
 	var cached: bool = Library.has_chapter(book.id, index) and not Library.load_chapter(book.id, index).get("excerpt", false)
@@ -198,10 +232,16 @@ func _chapter_row(book: Dictionary, index: int, date: float) -> Control:
 
 
 func _following(books: Array) -> void:
+	_content.add_child(_filter_row("Hide caught-up serials", "updates_hide_caught_up", "Leave out serials with no unread chapters."))
+	var hide: bool = bool(Settings.get_value("updates_hide_caught_up"))
 	var flow := HFlowContainer.new()
 	flow.add_theme_constant_override("h_separation", 16)
 	flow.add_theme_constant_override("v_separation", 16)
+	var shown := 0
 	for b in books:
+		if hide and unread_count(b) == 0:
+			continue
+		shown += 1
 		var card := UI.panel("Card")
 		card.custom_minimum_size.x = 340 if not compact else 0
 		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL if compact else Control.SIZE_FILL
@@ -218,7 +258,7 @@ func _following(books: Array) -> void:
 		t.custom_minimum_size.x = 120
 		col.add_child(t)
 		col.add_child(UI.label(BookCard._source_name(b) + ("  ·  RSS" if b.get("rss_only") else ""), "Small"))
-		var unread: int = b.chapters.size() - (b.progress.chapter + 1 if b.last_read > 0 else 0)
+		var unread: int = unread_count(b)
 		col.add_child(UI.label("%d chapters  ·  %d unread" % [b.chapters.size(), unread], "Muted"))
 		col.add_child(UI.label("Checked " + UI.relative_time(b.get("last_checked", 0)), "Small"))
 		var actions := UI.hbox(8)
@@ -230,7 +270,12 @@ func _following(books: Array) -> void:
 		row.add_child(col)
 		card.add_child(row)
 		flow.add_child(card)
-	_content.add_child(flow)
+	if shown == 0 and hide:
+		flow.free()
+		_content.add_child(UI.label("You're all caught up", "H3"))
+		_content.add_child(UI.label("No serials with unread chapters.", "Muted", true))
+	else:
+		_content.add_child(flow)
 
 
 # --- saved searches ----------------------------------------------------------

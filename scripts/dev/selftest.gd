@@ -16,6 +16,7 @@ func _ready() -> void:
 	_tag_suggest()
 	_picker()
 	_versions()
+	_updates_filters()
 	_sync_password()
 	_app_log()
 	await _word_counts()
@@ -101,6 +102,20 @@ func _versions() -> void:
 	check("v0.2.0 is not newer than 0.2.6", n.call("v0.2.0", "0.2.6"), false)
 	check("1.0 is newer than 0.9.9", n.call("1.0", "0.9.9"), true)
 	check("v0.3.0-beta counts as 0.3.0", n.call("v0.3.0-beta", "0.2.9"), true)
+
+
+func _updates_filters() -> void:
+	var book := {"chapters": [{}, {}, {}], "progress": {"chapter": 1, "paragraph": 0}, "last_read": 100}
+	check("updates unread count", UpdatesPage.unread_count(book), 1)
+	check("updates chapter 0 read", UpdatesPage.is_unread(book, 0), false)
+	check("updates chapter 1 read", UpdatesPage.is_unread(book, 1), false)
+	check("updates chapter 2 unread", UpdatesPage.is_unread(book, 2), true)
+	var done := {"chapters": [{}, {}, {}], "progress": {"chapter": 2, "paragraph": 0}, "last_read": 100}
+	check("updates caught up", UpdatesPage.unread_count(done), 0)
+	var fresh := {"chapters": [{}, {}, {}], "progress": {"chapter": 0, "paragraph": 0}, "last_read": 0}
+	check("updates never opened", UpdatesPage.unread_count(fresh), 3)
+	check("updates never opened chapter 0 unread", UpdatesPage.is_unread(fresh, 0), true)
+	check("updates no chapters", UpdatesPage.unread_count({"chapters": [], "progress": {"chapter": 0, "paragraph": 0}, "last_read": 0}), 0)
 
 
 func _book_search() -> void:
