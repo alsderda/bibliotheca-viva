@@ -885,7 +885,30 @@ func _rebuild_topbar() -> void:
 		row.add_child(actions)
 		_top_rows.add_child(row)
 		_place_top_row(row, title_ctl)
+		_fit_search_box()
+		_fit_search_box.call_deferred()
 	_refresh_listening()
+
+
+## Frees room for overflowing tabs by shrinking the page's search field to an
+## icon. It only grows back once the whole field fits, so it can't flip-flop.
+func _fit_search_box() -> void:
+	if _tab_strip == null:
+		return
+	var search: SearchBox = null
+	for c in _top_rows.find_children("*", "SearchBox", true, false):
+		search = c
+		break
+	if search == null:
+		return
+	if not _tab_strip.resized.is_connected(_fit_search_box):
+		_tab_strip.resized.connect(_fit_search_box)
+	if not search.refit_wanted.is_connected(_fit_search_box):
+		search.refit_wanted.connect(_fit_search_box)
+	if not search.collapsed and search.can_collapse() and _tab_strip.overflow() > 0.5:
+		search.collapsed = true
+	elif search.collapsed and -_tab_strip.overflow() >= search.grow_cost():
+		search.collapsed = false
 
 
 func _refocus(c) -> void:  # untyped: it may be freed by now

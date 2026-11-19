@@ -1,12 +1,13 @@
 class_name TabStrip
 extends HBoxContainer
 ## A row of page tabs that scrolls sideways when it doesn't fit, and shows that
-## it does: the clipped edge fades out, and on computers a chevron button sits
-## at that edge to page the row along (a mouse can't drag a ScrollContainer).
+## it does: the clipped edge fades out, and on computers a chevron button floats
+## over that edge to page the row along (a mouse can't drag a ScrollContainer).
 ##
-## Layout: [left chevron] [ScrollContainer (expands) > HBoxContainer of tab buttons] [right chevron]
-## Each chevron is shown only while there is more row hidden on its side.
-## Its minimum width is small, so the strip shrinks with the window instead of
+## Layout: a ScrollContainer (taking the strip's full width) of the tab buttons,
+## with an overlay on top carrying the edge fades and the chevrons. Each chevron
+## is shown only while there is more row hidden on its side.
+## Its minimum width stays small, so the strip shrinks with the window instead of
 ## pushing the rest of the top bar off screen.
 
 ## The ScrollContainer's horizontal scroll, in pixels. Set it before the strip
@@ -22,10 +23,16 @@ var scroll_offset: float:
 			_scroll.scroll_horizontal = clampi(int(round(_pending)), 0, int(round(_max_scroll())))
 			_refresh_indicators()
 
-## How far the fades reach over the row's clipped edge.
-const FADE_WIDTH := 32.0
-## A chevron pages the row by this share of the visible width.
-const PAGE_SHARE := 0.7
+## The chevron buttons float over the row's ends, so each fade is opaque under
+## the arrow glyph (letters showing through it look broken), then ramps to
+## transparent just inside it: the next tab reads up to the arrow and fades
+## out behind it. Without chevrons (phones) the fade is just the ramp.
+const CHEV_SIZE := 28.0
+## Where the 20 px arrow glyph, centred in the button, ends.
+const CHEV_GLYPH_END := 24.0
+const FADE_RAMP := 22.0
+const FADE_PC := CHEV_GLYPH_END + FADE_RAMP
+const FADE_PHONE := FADE_RAMP
 
 var _buttons: Array[Button] = []
 var _on_select: Callable
@@ -35,7 +42,7 @@ var _pc := false
 var _pending := 0.0
 var _revealed := false
 var _settled := false
-var _settles := 0
+var _fade_w := FADE_PHONE
 var _scroll: ScrollContainer
 var _row: HBoxContainer
 var _left: Button
@@ -56,17 +63,11 @@ func _init(names: PackedStringArray, selected: int, on_select: Callable, phone :
 	_selected = selected
 	# Chevrons are for mouse users; touch screens drag the row directly.
 	_pc = OS.has_feature("pc")
+	_fade_w = FADE_PC if _pc else FADE_PHONE
 	mouse_filter = Control.MOUSE_FILTER_PASS
 	add_theme_constant_override("separation", 0)
-	_left = UI.icon_button("chev_left", "Scroll tabs left", _page_left)
-	_right = UI.icon_button("chev_right", "Scroll tabs right", _page_right)
-	_left.visible = false
-	_right.visible = false
-	_left.gui_input.connect(_on_chev_wheel)
-	_right.gui_input.connect(_on_chev_wheel)
-	add_child(_left)
 	# A container, not a plain Control, so the row's height reaches the strip's
-	# minimum size (a phone's tab row would be squashed to the chevrons' height).
+	# minimum size (a plain Control reports none, and the row would collapse).
 	var clip := MarginContainer.new()
 	clip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -80,16 +81,27 @@ func _init(names: PackedStringArray, selected: int, on_select: Callable, phone :
 	row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_scroll.add_child(row)
 	clip.add_child(_scroll)
-	# The fades float over the row's edges, so they live beside the
+	# The fades and chevrons float over the row's edges, so they live beside the
 	# ScrollContainer (a child of it would join the scrolled content).
 	var overlay := Control.new()
 	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	clip.add_child(overlay)
-	_fade_l = _make_fade(false)
-	_fade_r = _make_fade(true)
+	var hard := CHEV_GLYPH_END if _pc else 0.0
+	_fade_l = _make_fade(false, _fade_w, hard)
+	_fade_r = _make_fade(true, _fade_w, hard)
 	overlay.add_child(_fade_l)
 	overlay.add_child(_fade_r)
-	add_child(_right)
+	# The chevrons sit on top of the fades, anchored to the overlay's edges, so
+	# they take no room from the row. A Button stops the clicks it covers while
+	# the ignored overlay lets the rest through to the tabs beside it.
+	_left = UI.icon_button("chev_left", "Scroll tabs left", _page_left)
+	_right = UI.icon_button("chev_right", "Scroll tabs right", _page_right)
+	for c in [_left, _right]:
+		c.visible = false
+		c.gui_input.connect(_on_chev_wheel)
+		overlay.add_child(c)
+	_anchor_chev(_left, false)
+	_anchor_chev(_right, true)
 
 
 func _row_of(names: PackedStringArray, phone: bool) -> HBoxContainer:
@@ -126,17 +138,21 @@ func _row_of(names: PackedStringArray, phone: bool) -> HBoxContainer:
 
 
 ## The top bar's panel is UiTheme.BG, so a fade to that color melts the cut-off
-## tab into the bar instead of ending in a hard edge.
-static func _make_fade(mirrored: bool) -> TextureRect:
+## tab into the bar instead of ending in a hard edge. With a chevron the fade
+## stays opaque for hard_px (under the arrow's outer half) and then ramps to
+## clear; without one it ramps from the edge.
+static func _make_fade(mirrored: bool, width_px: float, hard_px := 0.0) -> TextureRect:
 	var g := Gradient.new()
 	g.set_color(0, UiTheme.BG)
 	g.set_color(1, Color(UiTheme.BG, 0.0))
+	if hard_px > 0.0:
+		g.add_point(hard_px / width_px, UiTheme.BG)
 	var t := GradientTexture2D.new()
 	t.gradient = g
 	t.fill = GradientTexture2D.FILL_LINEAR
 	t.fill_from = Vector2(1.0, 0.5) if mirrored else Vector2(0.0, 0.5)
 	t.fill_to = Vector2(0.0, 0.5) if mirrored else Vector2(1.0, 0.5)
-	t.width = int(FADE_WIDTH)
+	t.width = int(width_px)
 	t.height = 2
 	var f := TextureRect.new()
 	f.texture = t
@@ -160,13 +176,32 @@ static func _make_fade(mirrored: bool) -> TextureRect:
 	if mirrored:
 		f.anchor_left = 1.0
 		f.anchor_right = 1.0
-		f.offset_left = -FADE_WIDTH
+		f.offset_left = -width_px
 		f.offset_right = 0.0
 	else:
 		f.offset_left = 0.0
-		f.offset_right = FADE_WIDTH
+		f.offset_right = width_px
 	f.visible = false
 	return f
+
+
+## Pins a chevron over the overlay's edge, centred on the row's height and flush
+## with the strip's side, so tabs stay visible right up to the arrow.
+static func _anchor_chev(c: Button, right_side: bool) -> void:
+	c.anchor_top = 0.5
+	c.anchor_bottom = 0.5
+	c.offset_top = -CHEV_SIZE / 2.0
+	c.offset_bottom = CHEV_SIZE / 2.0
+	if right_side:
+		c.anchor_left = 1.0
+		c.anchor_right = 1.0
+		c.offset_left = -CHEV_SIZE
+		c.offset_right = 0.0
+	else:
+		c.anchor_left = 0.0
+		c.anchor_right = 0.0
+		c.offset_left = 0.0
+		c.offset_right = CHEV_SIZE
 
 
 func _ready() -> void:
@@ -180,6 +215,16 @@ func _ready() -> void:
 ## The tab buttons, in order (for tests).
 func buttons() -> Array[Button]:
 	return _buttons
+
+
+## How much wider the row of tabs is than the room it has, in pixels; negative
+## when it fits with that much to spare. The top bar uses it to decide whether
+## the page's search field must shrink to an icon (> 0) or may grow back
+## (<= -its extra width). It must not depend on the chevrons or the scroll.
+func overflow() -> float:
+	if not is_instance_valid(_row) or not is_instance_valid(_scroll):
+		return 0.0
+	return _row.get_combined_minimum_size().x - _scroll.size.x
 
 
 func _pick(index: int) -> void:
@@ -199,13 +244,16 @@ func _page(dir: int) -> void:
 		return
 	if _page_tween != null and _page_tween.is_valid():
 		_page_tween.kill()
-	var target := clampf(float(_scroll.scroll_horizontal) + _scroll.size.x * PAGE_SHARE * float(dir), 0.0, _max_scroll())
+	# Move by what shows between the two edge overlays, so the tab that was
+	# fading behind the arrow ends up fully readable; always move a little.
+	var step := maxf(_scroll.size.x - 2.0 * _fade_w, 40.0)
+	var target := clampf(float(_scroll.scroll_horizontal) + step * float(dir), 0.0, _max_scroll())
 	_page_tween = create_tween()
 	_page_tween.tween_property(_scroll, "scroll_horizontal", int(round(target)), 0.18).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 
 
 ## A chevron is only shown while the row overflows, so a wheel over one may
-## always page the row; it never reaches the ScrollContainer beside it.
+## always page the row; it never reaches the row beneath it.
 func _on_chev_wheel(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
@@ -222,10 +270,6 @@ func _on_scroll_changed(_value: float) -> void:
 
 
 func _on_scroll_resized() -> void:
-	# Scrolling to the picked tab can bring up a chevron, which narrows the
-	# view and may push that tab back under the other edge: place it once more.
-	if _settled and _settles == 1:
-		_settle.call_deferred(3)
 	_maybe_reveal()
 	_refresh_indicators()
 
@@ -249,25 +293,28 @@ func _settle(hops: int) -> void:
 	if not is_inside_tree():
 		return
 	_settled = true
-	_settles += 1
-	var target := clampf(_pending, 0.0, _max_scroll())
+	var maxs := _max_scroll()
+	var target := clampf(_pending, 0.0, maxs)
 	if _selected >= 0 and _selected < _buttons.size():
-		# Keep the picked tab clear of the fades, not just inside the view.
 		var b := _buttons[_selected]
 		var view := _scroll.size.x
-		if b.position.x - FADE_WIDTH < target:
-			target = b.position.x - FADE_WIDTH
-		elif b.position.x + b.size.x + FADE_WIDTH > target + view:
-			target = b.position.x + b.size.x + FADE_WIDTH - view
-		target = clampf(target, 0.0, _max_scroll())
+		# A rebuild (filtering, picking a tab) restores the old scroll; keep it
+		# when the picked tab already shows clear of both edge overlays.
+		var lz := _fade_w if target > 0.0 else 0.0
+		var rz := _fade_w if target < maxs - 0.5 else 0.0
+		var clear := b.position.x >= target + lz and b.position.x + b.size.x <= target + view - rz
+		if not clear:
+			# Otherwise centre it (clamped to the scroll range), so parts of
+			# its neighbours show on both sides.
+			target = clampf(b.position.x + b.size.x * 0.5 - view * 0.5, 0.0, maxs)
 	_scroll.scroll_horizontal = int(round(target))
 	_pending = target
 	_refresh_indicators()
 
 
-## Showing a chevron shrinks the viewport, which can't remove the overflow that
-## showed it; hiding one grows it, which can't create new overflow. The two
-## settle after at most one extra layout, so plain visible can't loop.
+## The chevrons and fades float over the row without taking layout space, so
+## showing or hiding one can't change the overflow that showed it; plain visible
+## can't loop.
 func _refresh_indicators() -> void:
 	if not is_instance_valid(_scroll):
 		return

@@ -35,7 +35,7 @@ var _dirty := true
 var _rebuild_queued := false
 ## The top bar's filter box. Kept across top bar rebuilds (a sync or plugin
 ## change can rebuild it while you type), so it doesn't lose focus.
-var _search: LineEdit
+var _search: SearchBox
 
 
 func _ready() -> void:
@@ -94,16 +94,12 @@ func build_actions(bar: HBoxContainer) -> void:
 		bar.add_child(UI.icon_button("plus", "Add web novel", func(): main.navigate("browse")))
 
 
-func _search_field() -> LineEdit:
+func _search_field() -> SearchBox:
 	if _search == null:
-		_search = LineEdit.new()
-		_search.theme_type_variation = "SearchField"
-		_search.placeholder_text = "Filter books"
-		_search.custom_minimum_size.x = 220
-		_search.right_icon = Icons.get_icon("search", UiTheme.FAINT, 18)
-		_search.text_changed.connect(func(t): _filter_text = t; _rebuild())
-	if _search.text != _filter_text:
-		_search.text = _filter_text
+		_search = SearchBox.new("Filter books", 220.0)
+		_search.field.text_changed.connect(func(t): _filter_text = t; _rebuild())
+	if _search.field.text != _filter_text:
+		_search.field.text = _filter_text
 	if _search.get_parent():
 		_search.get_parent().remove_child(_search)
 	return _search
