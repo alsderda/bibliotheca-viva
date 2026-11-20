@@ -1218,7 +1218,8 @@ static func _normalize(b: Dictionary) -> void:
 		b.chapters = b.chapters.filter(func(c): return c is Dictionary)
 		for c in b.chapters:
 			c.title = str(c.get("title", ""))
-			c.url = str(c.get("url", ""))
+			if c.has("url"):
+				c.url = str(c.url)
 	var marks := []
 	if b.get("bookmarks") is Array:
 		for m in b.bookmarks:
