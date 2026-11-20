@@ -164,7 +164,7 @@ func add_from_url(url: String) -> Dictionary:
 		"url": n.get("url", url), "cover_url": n.get("cover_url", ""), "synopsis": n.get("synopsis", ""),
 		"tags": n.get("tags", []), "extra": n.get("extra", {}), "rss_only": res.get("rss_only", false),
 		"total_words": int(n.get("words", 0)),
-		"chapters": n.chapters,
+		"chapters": n.chapters.map(func(c): return {"title": c.title, "url": c.url, "date": c.date}),
 		"last_checked": Time.get_unix_time_from_system(),
 	})
 	_store_excerpts(book, n.chapters, 0)
