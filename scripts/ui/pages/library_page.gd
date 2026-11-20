@@ -495,7 +495,12 @@ func _hero(book: Dictionary) -> Control:
 	info.add_child(UI.margin(bar, 0, 6, 0, 8))
 	var buttons := UI.hbox(10)
 	buttons.add_child(UI.button("Continue", "book", "PrimaryButton", func(): main.open_reader(book.id)))
-	buttons.add_child(UI.button("" if compact else "Listen", "headphones", "", func(): main.open_reader(book.id); main.pages.reader.start_tts()))
+	buttons.add_child(UI.button("" if compact else "Listen", "headphones", "", func():
+		var want: String = book.id
+		await main.open_reader(book.id)
+		var reader: ReaderPage = main.pages.reader
+		if main.current == reader and reader.book.get("id", "") == want:
+			reader.start_tts()))
 	info.add_child(buttons)
 	row.add_child(info)
 	card.add_child(row)
