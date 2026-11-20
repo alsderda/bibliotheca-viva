@@ -341,10 +341,18 @@ static func _norm_page(data: Dictionary) -> Dictionary:
 				var nc := Sources.norm_chapter(c)
 				if not nc.is_empty():
 					chapters.append(nc)
-		out.fiction = {"title": str(fiction.get("title", "")), "author": str(fiction.get("author", "")),
-			"cover_url": str(fiction.get("cover_url", "")), "synopsis": str(fiction.get("synopsis", "")),
-			"tags": fiction.get("tags", []) if fiction.get("tags") is Array else [],
-			"words": int(fiction.get("words", 0)), "chapters": chapters}
+		var f: Dictionary = fiction.duplicate()
+		for key in ["title", "author", "cover_url", "synopsis"]:
+			if f.has(key) and not (f[key] is String):
+				f[key] = str(f[key])
+		if f.has("tags") and not (f.tags is Array):
+			f.tags = []
+		if f.has("extra") and not (f.extra is Dictionary):
+			f.erase("extra")
+		var words: Variant = f.get("words", 0)
+		f.words = int(words) if words is int or words is float else 0
+		f.chapters = chapters
+		out.fiction = f
 	elif out.has("fiction"):
 		out.erase("fiction")
 	return out
@@ -352,15 +360,15 @@ static func _norm_page(data: Dictionary) -> Dictionary:
 
 func _on_page(data: Dictionary) -> void:
 	info = _norm_page(data)
-	var fiction_url: String = data.get("fictionUrl", "")
+	var fiction_url: String = info.get("fictionUrl", "")
 	book_id = Library.find_by_url(fiction_url).get("id", "") if fiction_url != "" else ""
-	if _known_site() and data.has("fiction") and book_id != "":
-		_sync_fiction(Library.get_book(book_id), data.fiction)
-	if data.get("isChapter", false) and data.paragraphs.size() > 0 and Settings.get_value("web_save_as_you_go"):
+	if _known_site() and info.has("fiction") and book_id != "":
+		_sync_fiction(Library.get_book(book_id), info.fiction)
+	if info.get("isChapter", false) and info.paragraphs.size() > 0 and Settings.get_value("web_save_as_you_go"):
 		_save_current(false)
 	_mark_new_works()
 	_refresh_toolbar()
-	if _pending_listen and not data.get("challenge", false) and data.paragraphs.size() > 0:
+	if _pending_listen and not info.get("challenge", false) and info.paragraphs.size() > 0:
 		_pending_listen = false
 		start_listening(0)
 
