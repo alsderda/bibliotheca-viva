@@ -411,13 +411,20 @@ func _keep_local_files(old: String, new: String) -> void:
 
 
 ## Remove an installed plugin. Plugins in res://plugins (for development) can't be removed here.
+## A Sync tombstone is only recorded when the plugin was really installed, so a
+## failed install (or removing a stub that was never there) can't delete the good
+## copy on the user's other devices.
 func remove(id: String, stamp := -1.0) -> void:
 	var p := get_plugin(id)
 	if p:
 		p.shutdown()
+	var rec: Variant = records.get(id)
+	var was_installed := DirAccess.dir_exists_absolute(installed_dir().path_join(id)) \
+		or (rec is Dictionary and not bool(rec.get("removed", false)))
 	_remove_tree(installed_dir().path_join(id))
-	records[id] = {"v": str(records.get(id, {}).get("v", "")), "t": stamp if stamp >= 0 else Time.get_unix_time_from_system(), "removed": true}
-	_save_records()
+	if was_installed:
+		records[id] = {"v": str(rec.get("v", "") if rec is Dictionary else ""), "t": stamp if stamp >= 0 else Time.get_unix_time_from_system(), "removed": true}
+		_save_records()
 	reload(id)
 
 

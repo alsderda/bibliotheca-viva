@@ -105,13 +105,22 @@ const SCRIPT := r"""
   const SITES = [];
   const helpers = { $, $$, textOf, abs, firstText };
   function register(id, make) {
-    try { const r = make(helpers); if (r && r.hosts && r.info) { r.id = id; SITES.push(r); if (r.skip) SKIP += ', ' + r.skip; } } catch (e) {}
+    try {
+      const r = make(helpers);
+      // a recogniser that isn't one is ignored, so one bad plugin can't break the other sites
+      if (r && r.hosts instanceof RegExp && typeof r.info === 'function') {
+        r.id = id; SITES.push(r);
+        if (r.skip && validSelector(r.skip)) SKIP += ', ' + r.skip;
+      }
+    } catch (e) {}
   }
   /*PLUGINS*/
 
   async function siteInfo() {
     for (const r of SITES) {
-      if (!r.hosts.test(location.hostname)) continue;
+      let match = false;
+      try { match = r.hosts.test(location.hostname); } catch (e) { continue; }
+      if (!match) continue;
       try {
         const info = await r.info();
         if (info) { info.site = r.id; return info; }

@@ -31,6 +31,87 @@ func _run(plugin_id: String, background: bool, job: Callable) -> Variant:
 	return await _for_user(plugin_id, job)
 
 
+# --- plugin data -------------------------------------------------------------
+
+## One chapter as the app stores it: {title, url, date, excerpt_html?}. {} when
+## the plugin's item has no link to download, so callers can drop it.
+static func norm_chapter(c: Variant) -> Dictionary:
+	if not (c is Dictionary):
+		return {}
+	if str(c.get("url", "")) == "":
+		return {}
+	var d: Variant = c.get("date", 0)
+	var out := {"title": str(c.get("title", "")), "url": str(c.url),
+		"date": int(d) if d is int or d is float else 0}
+	var excerpt: Variant = c.get("excerpt_html", "")
+	if excerpt is String and excerpt != "":
+		out.excerpt_html = excerpt
+	return out
+
+
+## A whole fetch_novel result: {novel} with safe defaults, or {error} naming the
+## plugin when nothing usable came back. `url_fallback` fills in a book link the
+## plugin left out.
+static func norm_novel(n: Variant, plugin_name: String, url_fallback := "") -> Dictionary:
+	if not (n is Dictionary):
+		return {"error": "%s returned a book without details." % plugin_name}
+	var chapters := []
+	var raw: Variant = n.get("chapters", [])
+	if raw is Array:
+		for c in raw:
+			var nc := norm_chapter(c)
+			if not nc.is_empty():
+				chapters.append(nc)
+	if str(n.get("title", "")) == "":
+		return {"error": "%s returned a book without a title." % plugin_name}
+	if chapters.is_empty():
+		return {"error": "%s returned a book without chapters." % plugin_name}
+	var tags: Variant = n.get("tags", [])
+	var extra: Variant = n.get("extra", null)
+	var words: Variant = n.get("words", 0)
+	var out := {"title": str(n.title), "author": str(n.get("author", "")),
+		"cover_url": str(n.get("cover_url", "")), "synopsis": str(n.get("synopsis", "")),
+		"tags": tags if tags is Array else [],
+		"url": str(n.get("url", url_fallback)) if str(n.get("url", url_fallback)) != "" else url_fallback,
+		"chapters": chapters, "words": int(words) if words is int or words is float else 0}
+	if extra is Dictionary:
+		out.extra = extra
+	return {"novel": out}
+
+
+## A whole search result: {results, error, blocked}, dropping items without a
+## link. An empty list stays one: finding nothing is a valid answer.
+static func norm_search(res: Variant, plugin_name: String) -> Dictionary:
+	if not (res is Dictionary):
+		return {"results": [], "error": "%s returned a broken search response." % plugin_name}
+	var out := {"results": [], "error": str(res.get("error", "")), "blocked": bool(res.get("blocked", false))}
+	var raw: Variant = res.get("results", [])
+	if raw is Array:
+		for x in raw:
+			if x is Dictionary and str(x.get("url", "")) != "":
+				out.results.append({"title": str(x.get("title", "")), "url": str(x.url),
+					"cover_url": str(x.get("cover_url", "")), "info": str(x.get("info", ""))})
+	if res.has("web_url"):
+		out.web_url = str(res.web_url)
+	return out
+
+
+## A whole fetch_chapter result: {title, paragraphs, error}, with paragraphs as
+## an array of non-empty strings. Emptiness stays the caller's call.
+static func norm_chapter_text(r: Variant, plugin_name: String) -> Dictionary:
+	if not (r is Dictionary):
+		return {"title": "", "paragraphs": PackedStringArray(), "error": "%s returned a broken chapter." % plugin_name}
+	var paras := PackedStringArray()
+	var raw: Variant = r.get("paragraphs", [])
+	if raw is String:
+		raw = [raw]
+	if raw is Array or raw is PackedStringArray:
+		for p in raw:
+			if p is String and p.strip_edges() != "":
+				paras.append(p)
+	return {"title": str(r.get("title", "")), "paragraphs": paras, "error": str(r.get("error", ""))}
+
+
 # --- discovery ---------------------------------------------------------------
 
 ## Every source Browse can search: [{key, label, disabled}], key is "<plugin id>|<plugin's own key>".
@@ -47,8 +128,8 @@ func search(query: String, choice: String) -> Dictionary:
 	var p := Plugins.get_plugin(choice.get_slice("|", 0))
 	if p == null:
 		return {"results": [], "error": "That source's plugin isn't installed or is switched off."}
-	var r: Dictionary = await _for_user(p.id, func(): return await p.search(query, choice.substr(choice.find("|") + 1)))
-	r.merge({"results": [], "error": ""})
+	var raw: Variant = await _for_user(p.id, func(): return await p.search(query, choice.substr(choice.find("|") + 1)))
+	var r := norm_search(raw, p.name)
 	for x in r.results:
 		x.source = p.id
 	if r.get("blocked", false) and p.search_url(query) != "":
@@ -68,18 +149,22 @@ func add_from_url(url: String) -> Dictionary:
 	if p == null:
 		return {"error": "None of your plugins handles this site. Open the page in the Web tab instead: Add to library there works on any site.", "web_url": url}
 	var source := p.id
-	var res: Dictionary = await _for_user(p.id, func(): return await p.fetch_novel(url))
-	if res.get("blocked", false):
+	var res: Variant = await _for_user(p.id, func(): return await p.fetch_novel(url))
+	if res is Dictionary and bool(res.get("blocked", false)):
 		res.web_url = url
-	if res.get("error", "") != "":
+	if res is Dictionary and str(res.get("error", "")) != "":
 		return res
-	var n: Dictionary = res.novel
+	var checked := norm_novel(res.get("novel", {}) if res is Dictionary else {}, p.name, url)
+	if checked.has("error"):
+		checked.web_url = url
+		return checked
+	var n: Dictionary = checked.novel
 	var book := Library.add_book({
 		"title": n.title, "author": n.get("author", ""), "kind": "web", "source": source,
 		"url": n.get("url", url), "cover_url": n.get("cover_url", ""), "synopsis": n.get("synopsis", ""),
 		"tags": n.get("tags", []), "extra": n.get("extra", {}), "rss_only": res.get("rss_only", false),
 		"total_words": int(n.get("words", 0)),
-		"chapters": n.chapters.map(func(c): return {"title": c.title, "url": c.url, "date": c.get("date", 0)}),
+		"chapters": n.chapters,
 		"last_checked": Time.get_unix_time_from_system(),
 	})
 	_store_excerpts(book, n.chapters, 0)
@@ -109,8 +194,9 @@ func load_chapter(book: Dictionary, index: int, background := false) -> Dictiona
 		if not cached.is_empty():
 			return cached
 		return {"error": missing_plugin_message(book)}
-	var r: Dictionary = await Net.shared("chapter\n%s\n%d" % [book.id, index], func():
+	var raw: Variant = await Net.shared("chapter\n%s\n%d" % [book.id, index], func():
 		return await _run(p.id, background, func(): return await p.fetch_chapter(book, ch, index)))
+	var r := norm_chapter_text(raw, p.name)
 	if r.get("error", "") == "" and r.get("paragraphs", []).size() > 0:
 		Library.store_chapter(book.id, index, ch.title, r.paragraphs)
 		return {"title": ch.title, "paragraphs": r.paragraphs, "excerpt": false}
@@ -133,27 +219,31 @@ func refresh(book: Dictionary, background := false) -> Dictionary:
 
 
 func _refresh(p: SourcePlugin, book: Dictionary, background: bool) -> Dictionary:
-	var res: Dictionary = await _run(p.id, background, func(): return await p.fetch_novel(book.url))
-	if res.get("error", "") != "":
-		return {"new": 0, "error": res.error}
+	var res: Variant = await _run(p.id, background, func(): return await p.fetch_novel(book.url))
+	if res is Dictionary and str(res.get("error", "")) != "":
+		return {"new": 0, "error": str(res.error)}
+	var checked := norm_novel(res.get("novel", {}) if res is Dictionary else {}, p.name, book.url)
+	if checked.has("error"):
+		return {"new": 0, "error": checked.error}
+	var novel: Dictionary = checked.novel
 	var known := {}
 	for c in book.chapters:
 		known[Library.chapter_key(c.url)] = c
 	var added := 0
 	var first_new: int = book.chapters.size()
-	for c in res.novel.chapters:
+	for c in novel.chapters:
 		var old: Variant = known.get(Library.chapter_key(c.url))
 		if old == null:
 			book.chapters.append({"title": c.title, "url": c.url, "date": c.get("date", 0)})
 			added += 1
 		elif float(old.get("date", 0)) <= 0 and float(c.get("date", 0)) > 0:
 			old.date = c.date  # fill in dates an older plugin version didn't report
-	_store_excerpts(book, res.novel.chapters, 0)
+	_store_excerpts(book, novel.chapters, 0)
 	var fields := {"last_checked": Time.get_unix_time_from_system(), "chapters": book.chapters}
-	if res.novel.has("extra"):
-		fields.extra = res.novel.extra
-	if int(res.novel.get("words", 0)) > 0:
-		fields.total_words = int(res.novel.words)
+	if novel.has("extra"):
+		fields.extra = novel.extra
+	if int(novel.get("words", 0)) > 0:
+		fields.total_words = int(novel.words)
 	Library.update_book(book.id, fields)
 	return {"new": added, "error": "", "first_new": first_new}
 

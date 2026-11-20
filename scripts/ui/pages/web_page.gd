@@ -306,11 +306,52 @@ func _on_ipc(message: String) -> void:
 		"page": _on_page(data)
 		"jump":
 			if not info.get("paragraphs", []).is_empty():
-				start_listening(int(data.i))
+				start_listening(int(data.get("i", 0)))
+
+
+## Page-script data with safe defaults: a recogniser may leave out anything the
+## page doesn't have, and chapters without a link are dropped.
+static func _norm_page(data: Dictionary) -> Dictionary:
+	var out := data.duplicate()
+	for key in ["url", "title", "site", "siteRule", "chapterTitle", "fictionTitle",
+			"chapterUrl", "fictionUrl", "next", "prev"]:
+		if out.has(key) and not (out[key] is String):
+			out[key] = str(out[key])
+	var paras := []
+	var raw_paras: Variant = data.get("paragraphs", [])
+	if raw_paras is Array:
+		for p in raw_paras:
+			if p is Dictionary:
+				paras.append({"t": str(p.get("t", "")), "k": str(p.get("k", "p")), "h": str(p.get("h", ""))})
+	out.paragraphs = paras
+	var listing: Variant = data.get("listing")
+	if listing is Dictionary:
+		var count: Variant = listing.get("count", 0)
+		out.listing = {"name": str(listing.get("name", "")),
+			"count": int(count) if count is int or count is float else 0,
+			"works": listing.get("works", []) if listing.get("works") is Array else []}
+	elif out.has("listing"):
+		out.erase("listing")
+	var fiction: Variant = data.get("fiction")
+	if fiction is Dictionary:
+		var chapters := []
+		var raw: Variant = fiction.get("chapters", [])
+		if raw is Array:
+			for c in raw:
+				var nc := Sources.norm_chapter(c)
+				if not nc.is_empty():
+					chapters.append(nc)
+		out.fiction = {"title": str(fiction.get("title", "")), "author": str(fiction.get("author", "")),
+			"cover_url": str(fiction.get("cover_url", "")), "synopsis": str(fiction.get("synopsis", "")),
+			"tags": fiction.get("tags", []) if fiction.get("tags") is Array else [],
+			"words": int(fiction.get("words", 0)), "chapters": chapters}
+	elif out.has("fiction"):
+		out.erase("fiction")
+	return out
 
 
 func _on_page(data: Dictionary) -> void:
-	info = data
+	info = _norm_page(data)
 	var fiction_url: String = data.get("fictionUrl", "")
 	book_id = Library.find_by_url(fiction_url).get("id", "") if fiction_url != "" else ""
 	if _known_site() and data.has("fiction") and book_id != "":
