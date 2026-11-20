@@ -185,6 +185,4 @@ func _load() -> void:
 
 
 func _save() -> void:
-	var f := FileAccess.open(_path(), FileAccess.WRITE)
-	if f:
-		f.store_string(JSON.stringify(_state))
+	SafeFile.write_text(_path(), JSON.stringify(_state))

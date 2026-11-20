@@ -138,8 +138,6 @@ func _load() -> void:
 
 
 func _save() -> void:
-	var f := FileAccess.open(_path(), FileAccess.WRITE)
-	if f:
-		var data := _values.duplicate()
-		data._stamps = stamps
-		f.store_string(JSON.stringify(data, "\t"))
+	var data := _values.duplicate()
+	data._stamps = stamps
+	SafeFile.write_text(_path(), JSON.stringify(data, "\t"))
