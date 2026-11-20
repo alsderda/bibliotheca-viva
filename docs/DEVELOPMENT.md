@@ -136,6 +136,8 @@ GODOT=godot scripts/dev/synctest.sh http://127.0.0.1:8089/
 
 Runs two profiles as two devices against the server: first sync, changes on each side, a removal, a plugin installed, updated and removed, a sync with nothing to do (counting its requests), both syncing at the same time, an upload of a big book killed part way (it goes up as packs, and the other device fetches it in few requests), a couple of chapters added later (sent one by one), and a change made just before closing.
 
+A GitHub check (`.github/workflows/tests.yml`, "Sync test" job) runs it on Linux for every PR and push to `main`, against a local WsgiDAV server started by the workflow.
+
 ### Self-test
 
 ```sh
