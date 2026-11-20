@@ -11,6 +11,10 @@ my-site/
 
 The app loads plugins at runtime, so they can be installed into a finished app: from a link, from a plugin repository, from a folder (desktop), or by Sync from another device. While you work on a plugin, put its folder (or a clone of its repository) in the project's `plugins/` folder, which git ignores. The app loads it from there each time it starts.
 
+## Trust
+
+A plugin is a program that runs inside the app, with the app's full access to your files and the network. There is no sandbox and no signature check: the download is fetched over HTTPS and run as-is. Install only from repositories you trust. With Sync on, installing a plugin on one device installs it on your other devices too.
+
 ## plugin.json
 
 ```json
@@ -134,7 +138,9 @@ function recognise() {
 return { hosts: /(^|\.)mysite\.example$/, skip: '.author-note', info: recognise };
 ```
 
-`info` may be `async`. `skip` is a CSS selector for site chrome inside the chapter text that shouldn't be read aloud. A page that lists works can return `{ isChapter: false, listing: { name, count, items, anchor } }` to offer Save search. `items` is `[{ url, el }]`, each work's link and its element on the page, so the app can highlight the works that are new on a saved search. `anchor` is the list element; the note about new works goes above it. Leave out anything the page doesn't have; the app reads the text of any page by itself. Users can override the chapter text, skipped parts, next/previous links and chapter title with their own site rules (Settings → Sites); those win over what `web.js` returns.
+`info` may be `async`. `skip` is a CSS selector for site chrome inside the chapter text that shouldn't be read aloud. A page that lists works can return `{ isChapter: false, listing: { name, count, items, anchor } }` to offer Save search. `items` is `[{ url, el }]`, each work's link and its element on the page, so the app can highlight the works that are new on a saved search. `anchor` is the list element; the note about new works goes above it.
+
+Only two things are required: `hosts` must be a regular expression matching the site's host names, and `info` must be a function (it may be `async`). A recogniser that returns anything else is ignored, and a recogniser that throws on a page is skipped for that page, so one broken plugin can't break the Web tab on other sites. Everything `info` returns is optional and may be left out: the app reads the text of any page by itself, fills in a missing listing `name` or `count`, ignores chapters without a `url`, and ignores a `skip` selector that isn't valid. Users can override the chapter text, skipped parts, next/previous links and chapter title with their own site rules (Settings → Sites); those win over what `web.js` returns.
 
 ## Plugin repositories
 
