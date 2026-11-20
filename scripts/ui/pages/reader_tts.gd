@@ -34,8 +34,8 @@ func connect_signals() -> void:
 
 
 ## Reads the current chapter aloud from `from`, or from the first visible paragraph.
-## Waits while the chapter is still loading instead of giving up after a fixed delay;
-## when loading fails the reader already shows why, so there is nothing more to say.
+## Waits while the chapter is still loading; when loading fails the reader
+## already shows why, so there is nothing more to say.
 func start(from := -1) -> void:
 	if not Speech.is_supported():
 		page.main.toast("Text-to-speech isn't available on this device.", "warn")

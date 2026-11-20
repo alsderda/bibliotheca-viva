@@ -211,7 +211,7 @@ func navigate(key: String) -> void:
 
 
 ## Shows the reader for the book and waits until its chapter has loaded (or failed),
-## so callers can start reading right away instead of guessing with a fixed delay.
+## so a caller can start reading aloud as soon as this returns.
 func open_reader(book_id: String, chapter := -1) -> void:
 	var reader: ReaderPage = pages.reader
 	reader.tab = 0

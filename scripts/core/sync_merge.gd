@@ -154,8 +154,8 @@ static func cover_newer(a: Dictionary, b: Dictionary) -> bool:
 
 
 ## The newest reading position, clamped to chapters that exist here, or {}
-## when this device already read further. The paragraph is stored as the other
-## device left it, the way the chapter index used to be before clamping.
+## when this device already read further. The paragraph is kept as the other
+## device left it: this device may not have the chapter's text to check it against.
 static func newer_progress(local: Dictionary, entry: Dictionary, key_of: Callable) -> Dictionary:
 	if num(entry.get("last_read", 0)) <= num(local.get("last_read", 0)):
 		return {}

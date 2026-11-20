@@ -158,9 +158,11 @@ Installs every plugin the repository lists, checks each one runs from the data f
 
 | Path | What |
 | --- | --- |
-| `scripts/core/` | Settings, Library, SavedSearches (storage in `user://profiles/<name>/`), TextRules, Net (HTTP), Speech (TTS), EPUB/TXT/HTML parsing, Sync and its WebDAV client (`webdav.gd`, raw TCP/TLS because Godot's HTTPClient can't send PROPFIND/MKCOL) |
+| `scripts/core/` | Settings, Library, SavedSearches (storage in `user://profiles/<name>/`, saved through `SafeFile` so a crash mid-save leaves the old file), TextRules, Net (HTTP), Speech (TTS), EPUB/TXT/HTML parsing, Sync (`sync.gd`: scheduling and transfers; `sync_merge.gd`: the rules for which device's change wins, pure functions) and its WebDAV client (`webdav.gd`, raw TCP/TLS because Godot's HTTPClient can't send PROPFIND/MKCOL) |
 | `scripts/sources/` | `Plugins` (finds, loads, installs and removes plugins), `SourcePlugin` (the base class plugins extend, with HTML helpers), `Sources` (routes searches, new books and chapter downloads to plugins) |
 | `scripts/ui/` | Theme, icons (SVG rendered at runtime), app shell (`main.gd`), pages, widgets |
+| `scripts/ui/pages/reader_tts.gd` | Reading aloud in the reader: starting and stopping, the highlight, following it, reading ahead and moving on to the next chapter |
+| `scripts/dev/` | Self-test (`selftest.gd`, with one checks file per area in `checks/`), sync test, plugin test |
 | `scripts/sources/web_extract.gd` | JavaScript injected into Web-tab pages (finds chapter text and next/prev links on any page, runs plugins' site recognisers, highlights the paragraph being read) |
 | `addons/godot_wry/` | godot-wry 1.0.2 (MIT): system web view GDExtension for Windows, macOS, Linux (the Linux library has an upstream fix on top, see "Linux AppImage") |
 | `plugins/` | Plugins you're working on (git-ignored; see [PLUGINS.md](../PLUGINS.md)) |
