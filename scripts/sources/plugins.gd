@@ -377,6 +377,7 @@ func install_files(m: Dictionary, files: Dictionary, stamp := -1.0) -> Dictionar
 	var id := str(m.id)
 	var target := installed_dir().path_join(id)
 	var tmp := target + ".new"
+	var backup := target + ".old"
 	_remove_tree(tmp)
 	for f in files:
 		var path := tmp.path_join(f)
@@ -387,15 +388,34 @@ func install_files(m: Dictionary, files: Dictionary, stamp := -1.0) -> Dictionar
 			return {"error": "Couldn't write %s (%s)." % [f, error_string(FileAccess.get_open_error())]}
 		fa.store_buffer(files[f])
 		fa.close()
+	# Files the old version made for itself, already moved into the new folder
+	# below; moved back there when the update is rolled back.
+	var keeps: Array = (get_entry(id).get("manifest", {}) as Dictionary).get("keep", [])
 	_keep_local_files(target, tmp)
-	_remove_tree(target)
+	# The old folder is moved aside, not deleted: when the new version can't
+	# run, it is moved back, so the working copy is never lost.
+	_remove_tree(backup)
+	var had_old := DirAccess.dir_exists_absolute(target)
+	if had_old:
+		DirAccess.rename_absolute(target, backup)
 	DirAccess.rename_absolute(tmp, target)
-	records[id] = {"v": str(m.get("version", "0")), "t": stamp if stamp >= 0 else Time.get_unix_time_from_system(), "removed": false}
-	_save_records()
 	reload(id)
 	var e := get_entry(id)
 	if e.get("error", "") != "":
-		return {"error": "Installed, but it can't run: " + e.error}
+		var err: String = e.error
+		for keep in keeps:
+			var back := target.path_join(str(keep))
+			if (DirAccess.dir_exists_absolute(back) or FileAccess.file_exists(back)) and not ".." in str(keep):
+				DirAccess.make_dir_recursive_absolute(backup.path_join(str(keep)).get_base_dir())
+				DirAccess.rename_absolute(back, backup.path_join(str(keep)))
+		_remove_tree(target)
+		if had_old:
+			DirAccess.rename_absolute(backup, target)
+			reload(id)
+		return {"error": "The new version can't run here (%s), so the old one was kept." % err}
+	_remove_tree(backup)
+	records[id] = {"v": str(m.get("version", "0")), "t": stamp if stamp >= 0 else Time.get_unix_time_from_system(), "removed": false}
+	_save_records()
 	return {"id": id, "name": e.get("name", id), "version": e.get("version", "")}
 
 

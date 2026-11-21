@@ -13,6 +13,8 @@ func run(t: Node) -> void:
 	_novel(t)
 	_chapter_text(t)
 	_remove(t)
+	_rollback(t)
+	await _user_wait(t)
 	_details(t)
 
 
@@ -121,3 +123,63 @@ func _remove(t: Node) -> void:
 		Plugins.records.get("selftest-ghost", {}).get("removed", false), true)
 	Plugins.records = keep
 	Plugins._save_records()
+
+
+## A broken update keeps the old plugin: the new folder is removed, the old one
+## moved back and still loading, and the records entry not advanced.
+func _rollback(t: Node) -> void:
+	var keep: Dictionary = Plugins.records.duplicate(true)
+	var id := "selftest-rollback"
+	Plugins._remove_tree(Plugins.installed_dir().path_join(id))
+	Plugins.records.erase(id)
+	var good := {"id": id, "name": "Rollback", "version": "1.0.0", "api": Plugins.API,
+		"main": "source.gd", "files": ["source.gd"]}
+	var good_files := {"source.gd": "extends SourcePlugin\n".to_utf8_buffer()}
+	good_files[Plugins.MANIFEST] = JSON.stringify(good, "\t").to_utf8_buffer()
+	var r := Plugins.install_files(good, good_files)
+	t.check("good version installs", r.get("id", ""), id)
+	t.check("good version loads",
+		[Plugins.get_entry(id).get("error", "missing"), Plugins.get_plugin(id) != null], ["", true])
+	var bad := {"id": id, "name": "Rollback", "version": "2.0.0", "api": Plugins.API,
+		"main": "source.gd", "files": ["source.gd"]}
+	# Broken but present: a missing main file can still hit the engine's script
+	# cache for the same path, so the update fails to load only when its own
+	# file is there and doesn't parse.
+	var bad_files := {"source.gd": "extends SourcePlugin\nfunc broken(:\n".to_utf8_buffer()}
+	bad_files[Plugins.MANIFEST] = JSON.stringify(bad, "\t").to_utf8_buffer()
+	var failed := Plugins.install_files(bad, bad_files)
+	t.check("broken update is an error", failed.has("error"), true)
+	t.check("broken update keeps the old version", Plugins.get_entry(id).get("version", ""), "1.0.0")
+	t.check("broken update keeps the old plugin loading",
+		[Plugins.get_entry(id).get("error", "missing"), Plugins.get_plugin(id) != null], ["", true])
+	t.check("broken update restores the old files",
+		FileAccess.get_file_as_string(Plugins.installed_dir().path_join(id).path_join("source.gd")),
+		"extends SourcePlugin\n")
+	t.check("broken update advances no record", Plugins.records.get(id, {}).get("v", ""), "1.0.0")
+	t.check("broken update leaves no swap folders",
+		[DirAccess.dir_exists_absolute(Plugins.installed_dir().path_join(id + ".new")),
+		DirAccess.dir_exists_absolute(Plugins.installed_dir().path_join(id + ".old"))], [false, false])
+	Plugins._remove_tree(Plugins.installed_dir().path_join(id))
+	Plugins.records = keep
+	Plugins._save_records()
+	Plugins.reload(id)
+
+
+## Only user jobs started within USER_JOB_TIMEOUT hold back background work, so
+## a stuck or errored job can't block updates forever.
+func _user_wait(t: Node) -> void:
+	t.check("no user job running", Sources._user_job_running("selftest-nobody"), false)
+	await Sources.wait_for_user("selftest-nobody")
+	t.check("wait returns with no user job", true, true)
+	t.check("foreground job returns its result",
+		await Sources._for_user("selftest-fg", func(): return 42), 42)
+	t.check("finished foreground job holds nothing", Sources._user_job_running("selftest-fg"), false)
+	var stale := Time.get_ticks_msec() - int((Sources.USER_JOB_TIMEOUT + 5.0) * 1000.0)
+	Sources._user_jobs["selftest-stale"] = [stale]
+	t.check("stale user job doesn't count", Sources._user_job_running("selftest-stale"), false)
+	t.check("stale user job pruned", Sources._user_jobs.has("selftest-stale"), false)
+	var started := Time.get_ticks_msec()
+	Sources._user_jobs["selftest-fresh"] = [started]
+	t.check("fresh user job counts", Sources._user_job_running("selftest-fresh"), true)
+	Sources._finish_user_job("selftest-fresh", started)
+	t.check("finished user job holds nothing", Sources._user_job_running("selftest-fresh"), false)

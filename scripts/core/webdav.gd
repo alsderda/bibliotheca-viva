@@ -24,6 +24,10 @@ var on_busy_wait: Callable
 
 const BUSY_WAIT_FIRST := 5.0
 const BUSY_WAIT_MAX := 120.0
+## Biggest response body accepted. Chapter packs hold at most a few megabytes of
+## chapter text and covers are small images, so anything bigger is a damaged or
+## hostile server, not a book.
+const MAX_BODY := 67108864  # 64 MiB
 
 var _host := ""
 var _port := 0
@@ -248,6 +252,9 @@ func _receive(method: String) -> Dictionary:
 				var t := _find_blank_line_or_crlf(_buf)
 				_buf = _buf.slice(t)
 				break
+			if body.size() + size > MAX_BODY:
+				close()
+				return _fail("The server sent too much data (over %d MB)" % (MAX_BODY / 1048576))
 			while _buf.size() < size + 2:
 				var e := await _read_more()
 				if e != "":
@@ -256,7 +263,10 @@ func _receive(method: String) -> Dictionary:
 			body.append_array(_buf.slice(0, size))
 			_buf = _buf.slice(size + 2)
 	elif hdrs.has("content-length"):
-		var n := int(hdrs["content-length"])
+		var n := maxi(int(hdrs["content-length"]), 0)
+		if n > MAX_BODY:
+			close()
+			return _fail("The server sent too much data (over %d MB)" % (MAX_BODY / 1048576))
 		while _buf.size() < n:
 			var e := await _read_more()
 			if e != "":
@@ -270,6 +280,10 @@ func _receive(method: String) -> Dictionary:
 			var e := await _read_more()
 			if e != "":
 				break
+			if _buf.size() > MAX_BODY:
+				close()
+				_buf = PackedByteArray()
+				return _fail("The server sent too much data (over %d MB)" % (MAX_BODY / 1048576))
 		body = _buf
 		_buf = PackedByteArray()
 		keep_alive = false

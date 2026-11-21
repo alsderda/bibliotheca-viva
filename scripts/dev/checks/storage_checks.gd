@@ -10,8 +10,74 @@ func run(t: Node) -> void:
 	_rm(_scratch)
 	DirAccess.make_dir_recursive_absolute(_scratch + "/meta")
 	_safefile(t)
+	_ids(t)
+	_replace(t)
 	_loader(t)
 	_rm(_scratch)
+
+
+func _ids(t: Node) -> void:
+	var ids := []
+	for i in 200:
+		ids.append(Library._new_id())
+	var seen := {}
+	for id in ids:
+		seen[id] = true
+	t.check("200 new ids are all unique", seen.size(), 200)
+	var hexed := true
+	for id in ids:
+		if str(id) == "" or str(id) != str(id).to_lower() or not str(id).is_valid_hex_number():
+			hexed = false
+	t.check("new ids are lowercase hex", hexed, true)
+	var fresh := true
+	for id in ids:
+		if not Library.get_book(str(id)).is_empty():
+			fresh = false
+	t.check("new ids are not in use", fresh, true)
+
+
+func _replace(t: Node) -> void:
+	var b := Library.add_book({"title": "Replace test", "kind": "web", "url": "https://example.com/rtest",
+		"chapters": [{"title": "A", "url": "https://example.com/r/a"}, {"title": "B", "url": "https://example.com/r/b"}, {"title": "C", "url": "https://example.com/r/c"}]})
+	Library.store_chapter(b.id, 0, "A", PackedStringArray(["text A"]))
+	Library.store_chapter(b.id, 1, "B", PackedStringArray(["text B"]))
+	Library.store_chapter(b.id, 2, "C", PackedStringArray(["text C"]))
+	# Swap the outer chapters and drop the middle one: each text follows its link.
+	Library.replace_chapters(b.id, [{"title": "C", "url": "https://example.com/r/c"}, {"title": "A", "url": "https://example.com/r/a"}])
+	t.check("swapped text follows its chapter", Library.load_chapter(b.id, 0).get("paragraphs", []), ["text C"])
+	t.check("other swapped text follows its chapter", Library.load_chapter(b.id, 1).get("paragraphs", []), ["text A"])
+	t.check("dropped chapter file is gone", Library.has_chapter(b.id, 2), false)
+	t.check("count moves with the chapter", Library.get_book(b.id).chapters[0].get("words"), 2)
+	t.check("no staging left behind", DirAccess.dir_exists_absolute(Library.book_dir(b.id) + "/staging"), false)
+	Library.remove_book(b.id, false)
+	_recover(t)
+
+
+## A kill mid-replace leaves staged files and maybe a manifest; the next call heals it.
+func _recover(t: Node) -> void:
+	var b := Library.add_book({"title": "Recovery test", "kind": "web", "url": "https://example.com/rrectest",
+		"chapters": [{"title": "A", "url": "https://example.com/rr/a"}, {"title": "B", "url": "https://example.com/rr/b"}]})
+	Library.store_chapter(b.id, 0, "A", PackedStringArray(["text A"]))
+	Library.store_chapter(b.id, 1, "B", PackedStringArray(["text B"]))
+	var dir := Library.book_dir(b.id)
+	var orig := [{"title": "A", "url": "https://example.com/rr/a"}, {"title": "B", "url": "https://example.com/rr/b"}]
+	var swapped := [{"title": "B", "url": "https://example.com/rr/b"}, {"title": "A", "url": "https://example.com/rr/a"}]
+	# A kill after the first staging move: one kept file staged, no manifest yet.
+	DirAccess.make_dir_recursive_absolute(dir + "/staging")
+	DirAccess.rename_absolute(dir + "/0.json", dir + "/staging/0.json")
+	Library.replace_chapters(b.id, orig)
+	t.check("staged file without a plan moves back", Library.load_chapter(b.id, 0).get("paragraphs", []), ["text A"])
+	t.check("unstaged file stays put", Library.load_chapter(b.id, 1).get("paragraphs", []), ["text B"])
+	# A kill after staging, manifest written: the run is finished instead.
+	DirAccess.make_dir_recursive_absolute(dir + "/staging")
+	DirAccess.rename_absolute(dir + "/0.json", dir + "/staging/0.json")
+	DirAccess.rename_absolute(dir + "/1.json", dir + "/staging/1.json")
+	SafeFile.write_text(dir + "/staging/plan.json", JSON.stringify({"chapters": swapped, "staged": [0, 1]}))
+	Library.replace_chapters(b.id, swapped)
+	t.check("interrupted swap finishes at chapter 0", Library.load_chapter(b.id, 0).get("paragraphs", []), ["text B"])
+	t.check("interrupted swap finishes at chapter 1", Library.load_chapter(b.id, 1).get("paragraphs", []), ["text A"])
+	t.check("recovery leaves no staging", DirAccess.dir_exists_absolute(dir + "/staging"), false)
+	Library.remove_book(b.id, false)
 
 
 func _safefile(t: Node) -> void:

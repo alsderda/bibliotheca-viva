@@ -22,6 +22,9 @@ const LEAD_KEEP_MS := 20
 const TRAIL_KEEP_MS := 60
 const SILENCE := 200  # sample amplitude treated as silence
 const SAPI_PREFIX := "sapi:"
+## Renders that fail this many times in a row mean the helper itself is broken
+## (every voice fails); a single bad clip only fails that clip.
+const MAX_RENDER_FAILURES := 3
 
 const HELPER := r"""
 $ErrorActionPreference = 'Stop'
@@ -181,6 +184,7 @@ var _thread: Thread
 var _dir := ""
 var _ready_ok := false
 var _broken := false
+var _render_failures := 0  # consecutive failed renders, reset by one good clip
 var _next_req := 1
 var _clips := {}        # key -> AudioStreamWAV, or null while being rendered
 var _req_key := {}      # request id -> key
@@ -342,13 +346,14 @@ func _on_line(line: String) -> void:
 	var path := _dir.path_join("%d.wav" % req)
 	if f.size() < 2 or f[1] != "OK":
 		push_warning("WinVoice: " + line)
-		_fail("render failed")
+		_render_failed(key)
 		return
 	var clip := _load_trimmed(path)
 	DirAccess.remove_absolute(path)
 	if clip == null:
-		_fail("bad audio")
+		_render_failed(key)
 		return
+	_render_failures = 0
 	if _clips.has(key):
 		_clips[key] = clip
 	_play_if_ready()
@@ -373,6 +378,25 @@ func _on_finished() -> void:
 	_playing_id = -1
 	if id != -1:
 		_ended_at = Time.get_ticks_msec()
+		ended.emit(id)
+
+
+## One clip didn't render (text the voice chokes on, a one-off helper error):
+## drop that request so the caller moves on to the next clip, instead of
+## giving up the helper, its voices and gapless playback for the whole session.
+## Only repeated failures (every voice is broken) or a dead helper process give
+## up entirely; one good clip resets the count.
+func _render_failed(key: String) -> void:
+	_clips.erase(key)
+	_render_failures += 1
+	var id := -1
+	if _want_key == key:
+		id = _want_id
+		_want_key = ""
+		_want_id = -1
+	if _render_failures >= MAX_RENDER_FAILURES:
+		_fail("render failed %d times in a row" % _render_failures)
+	elif id != -1:
 		ended.emit(id)
 
 

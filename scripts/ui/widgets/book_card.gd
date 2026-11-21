@@ -86,7 +86,9 @@ func _on_input(e: InputEvent) -> void:
 	if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_RIGHT:
 		menu_requested.emit(book_id, get_global_mouse_position())
 	elif e is InputEventScreenTouch and e.pressed and e.double_tap:
-		menu_requested.emit(book_id, e.position)
+		# gui_input positions are card-local, but the menu opens in viewport
+		# coordinates (like get_global_mouse_position() above).
+		menu_requested.emit(book_id, get_global_transform_with_canvas() * e.position)
 
 
 static func _badge_text(book: Dictionary) -> String:

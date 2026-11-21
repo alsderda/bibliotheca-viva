@@ -88,11 +88,8 @@ static func _android() -> Object:
 static func _write_blob(path: String, data: String) -> bool:
 	if data == "":
 		return false
-	var f := FileAccess.open(path, FileAccess.WRITE)
-	if f == null:
-		return false
-	f.store_string(data)
-	return true
+	# Through a temp file, so a crash keeps the old blob.
+	return SafeFile.write_text(path, data)
 
 
 static func _read_blob(path: String) -> String:

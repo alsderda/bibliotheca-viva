@@ -11,21 +11,54 @@ extends Node
 ## short quick list may have missed chapters in between.
 const FULL_CHECK_DAYS := 7
 
-var _user_jobs := {}  # plugin id -> jobs the user is waiting for, running now
+## A user job running longer than this no longer holds back background work.
+## Longer than one Net request timeout (30 s), so one slow page doesn't release
+## the queue early, but short enough that a stuck job can't block updates forever.
+const USER_JOB_TIMEOUT := 60.0
+
+## Plugin id -> start times (msec) of the user jobs running now. Start times,
+## not a count: a plugin call that errors out stops its coroutine, so no
+## decrement after the await would run; stale entries are ignored instead.
+var _user_jobs := {}
 
 
 ## Runs `job` as work the user is waiting for, so background work on the same plugin holds off.
 func _for_user(plugin_id: String, job: Callable) -> Variant:
-	_user_jobs[plugin_id] = int(_user_jobs.get(plugin_id, 0)) + 1
+	var started := Time.get_ticks_msec()
+	var running: Array = _user_jobs.get(plugin_id, [])
+	running.append(started)
+	_user_jobs[plugin_id] = running
 	var r: Variant = await job.call()
-	_user_jobs[plugin_id] -= 1
+	_finish_user_job(plugin_id, started)
 	return r
 
 
 ## Background work calls this before each step: it waits while the user is waiting on the same plugin.
 func wait_for_user(plugin_id: String) -> void:
-	while int(_user_jobs.get(plugin_id, 0)) > 0:
+	while _user_job_running(plugin_id):
 		await get_tree().process_frame
+
+
+## Drop one finished user job.
+func _finish_user_job(plugin_id: String, started: int) -> void:
+	var running: Array = _user_jobs.get(plugin_id, [])
+	running.erase(started)
+	if running.is_empty():
+		_user_jobs.erase(plugin_id)
+
+
+## Whether a user job started within USER_JOB_TIMEOUT is running now.
+func _user_job_running(plugin_id: String) -> bool:
+	var running: Array = _user_jobs.get(plugin_id, [])
+	if running.is_empty():
+		return false
+	var cutoff := Time.get_ticks_msec() - int(USER_JOB_TIMEOUT * 1000.0)
+	running = running.filter(func(s): return int(s) >= cutoff)
+	if running.is_empty():
+		_user_jobs.erase(plugin_id)
+		return false
+	_user_jobs[plugin_id] = running
+	return true
 
 
 func _run(plugin_id: String, background: bool, job: Callable) -> Variant:

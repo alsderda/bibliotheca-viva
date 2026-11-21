@@ -13,7 +13,7 @@ The app loads plugins at runtime, so they can be installed into a finished app: 
 
 ## Trust
 
-A plugin is a program that runs inside the app, with the app's full access to your files and the network. There is no sandbox and no signature check: the download is fetched over HTTPS and run as-is. Install only from repositories you trust. With Sync on, installing a plugin on one device installs it on your other devices too.
+A plugin is a program that runs inside the app, with the app's full access to your files and the network. There is no sandbox and no signature check: the download is fetched over HTTPS and run as-is. Install only from repositories you trust. With Sync on, installing a plugin on one device installs it on your other devices too. Those devices install it from the sync server, so anyone who can write to your sync folder can install code on all of them: use a server only you control.
 
 ## plugin.json
 

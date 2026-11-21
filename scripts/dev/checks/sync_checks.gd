@@ -7,6 +7,9 @@ func run(t: Node) -> void:
 	_decisions(t, key_of)
 	_validation(t)
 	_plugin_complete(t)
+	_names(t)
+	_safe_writes(t)
+	await _limits(t)
 
 
 ## Merge decisions on hand-made data, without a server.
@@ -128,6 +131,50 @@ func _validation(t: Node) -> void:
 	t.check("bad plugin records go", checked.doc.plugins, {"keep": {"v": "1.0", "t": 1.0}})
 	t.check("bad missing goes", checked.doc.missing, {"keep": ["a"]})
 	t.check("dropped entries are counted", checked.dropped, 13)
+
+
+## Names from other devices that end up in server or local paths.
+func _names(t: Node) -> void:
+	t.check("plain plugin id is safe", Sync._safe_name("mysite"), true)
+	t.check("dotted version is safe", Sync._safe_name("1.10.0"), true)
+	t.check("cover name is safe", Sync._safe_name("cover-abc123def456.png"), true)
+	t.check("parent escape is unsafe", Sync._safe_name("../x"), false)
+	t.check("subfolder is unsafe", Sync._safe_name("a/b"), false)
+	t.check("drive is unsafe", Sync._safe_name("c:"), false)
+	t.check("backslash is unsafe", Sync._safe_name("a\\b"), false)
+	t.check("hidden name is unsafe", Sync._safe_name(".hidden"), false)
+	t.check("empty name is unsafe", Sync._safe_name(""), false)
+
+
+## State and cache saves go through a temp file, so a crash can't leave a
+## half-written file behind.
+func _safe_writes(t: Node) -> void:
+	var path := Settings.data_dir() + "/selftest_sync_state.json"
+	DirAccess.remove_absolute(path)
+	DirAccess.remove_absolute(path + ".tmp")
+	t.check("safe write lands", SafeFile.write_text(path, "{\"a\": 1}"), true)
+	t.check("safe write reads back whole", FileAccess.get_file_as_string(path), "{\"a\": 1}")
+	t.check("safe write leaves no temp file", FileAccess.file_exists(path + ".tmp"), false)
+	DirAccess.remove_absolute(path)
+	Sync._save_state()
+	t.check("state save leaves no temp file", FileAccess.file_exists(Sync._state_path() + ".tmp"), false)
+	Sync._save_cache()
+	t.check("cache save leaves no temp file", FileAccess.file_exists(Sync._cache_path() + ".tmp"), false)
+
+
+## Oversized replies fail instead of filling memory; offline, with a pre-read reply.
+func _limits(t: Node) -> void:
+	t.check("responses are capped at 64 MiB", WebDav.MAX_BODY, 67108864)
+	var huge := WebDav.new("https://example.com/dav/")
+	huge._buf = "HTTP/1.1 200 OK\r\nContent-Length: 100000000\r\nConnection: close\r\n\r\n".to_utf8_buffer()
+	var r: Dictionary = await huge._receive("GET")
+	t.check("oversized content-length fails", r.ok, false)
+	t.check("oversized content-length says too much data", r.error.contains("too much"), true)
+	var chunks := WebDav.new("https://example.com/dav/")
+	chunks._buf = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n40000000\r\n".to_utf8_buffer()
+	var c: Dictionary = await chunks._receive("GET")
+	t.check("oversized chunk fails", c.ok, false)
+	t.check("oversized chunk says too much data", c.error.contains("too much"), true)
 
 
 ## A version counts as uploaded only when the manifest is listed in its folder.
