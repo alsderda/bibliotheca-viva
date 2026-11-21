@@ -37,6 +37,7 @@ func run(t: Node) -> void:
 	await _empty_or_never(t)
 	await _blocked(t)
 	await _malformed(t)
+	await _asked_full(t)
 
 
 func _ch(n: int) -> Dictionary:
@@ -288,4 +289,23 @@ func _malformed(t: Node) -> void:
 	t.check("malformed quick list adds the new chapter", r.get("new", -1), 1)
 	b = Library.get_book(b.id)
 	t.check("malformed quick list stamps the full check", b.get("last_full_check", 0) >= now, true)
+	Library.remove_book(b.id, false)
+
+
+## The chapter list's "Check for new" button asks for a full check even when a quick one would do.
+func _asked_full(t: Node) -> void:
+	var now := Time.get_unix_time_from_system()
+	var fake := Fake.new()
+	fake.id = "selftest-update"
+	fake.name = "UpdatePlug"
+	fake.latest = {"chapters": [_ch(3), _ch(4)], "error": ""}
+	fake.novel = _novel([_ch(1), _ch(2), _ch(3), _ch(4)], {"status": "new"}, 9)
+	var b := _book([_ch(1), _ch(2), _ch(3)], now - 100)
+	var r: Dictionary = await Sources._refresh(fake, b, false, true)
+	t.check("asked-for full check skips the quick list", fake.latest_calls, 0)
+	t.check("asked-for full check reads the full list", fake.novel_calls, 1)
+	t.check("asked-for full check finds the new chapter", r.get("new", -1), 1)
+	b = Library.get_book(b.id)
+	t.check("asked-for full check updates extra", b.get("extra", {}), {"status": "new"})
+	t.check("asked-for full check stamps last_full_check", b.get("last_full_check", 0) >= now, true)
 	Library.remove_book(b.id, false)

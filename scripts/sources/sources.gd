@@ -242,14 +242,18 @@ func load_chapter(book: Dictionary, index: int, background := false) -> Dictiona
 
 
 ## Re-check a web book for new chapters. -> {new: int, error}. `background`: an update
-## check nobody is waiting on. A check of a book that's already being checked waits for it.
-func refresh(book: Dictionary, background := false) -> Dictionary:
+## check nobody is waiting on. `full`: read the book's whole chapter list even when a
+## quick check would do (the reader asked for it). A check of a book that's already
+## being checked the same way waits for it.
+func refresh(book: Dictionary, background := false, full := false) -> Dictionary:
 	if book.kind != "web" or book.source == "web":
 		return {"new": 0, "error": ""}
 	var p := Plugins.get_plugin(book.source)
 	if p == null:
 		return {"new": 0, "error": missing_plugin_message(book)}
-	return await Net.shared("refresh\n" + str(book.id), func(): return await _refresh(p, book, background))
+	# A full check mustn't be handed a quick check's result that's already running.
+	return await Net.shared(("refresh-full\n" if full else "refresh\n") + str(book.id),
+		func(): return await _refresh(p, book, background, full))
 
 
 ## True when the next update check must read the book's full chapter list: new
@@ -325,9 +329,9 @@ func _full_check(p: SourcePlugin, book: Dictionary, background: bool, now: float
 	return _merge(book, novel.chapters, fields)
 
 
-func _refresh(p: SourcePlugin, book: Dictionary, background: bool) -> Dictionary:
+func _refresh(p: SourcePlugin, book: Dictionary, background: bool, force_full := false) -> Dictionary:
 	var now := Time.get_unix_time_from_system()
-	if full_check_due(book, now):
+	if force_full or full_check_due(book, now):
 		return await _full_check(p, book, background, now)
 	var quick: Variant = await _run(p.id, background, func(): return await p.fetch_latest(book.url))
 	var q := norm_latest(quick, p.name)

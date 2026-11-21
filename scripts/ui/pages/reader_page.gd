@@ -1637,7 +1637,7 @@ func _cycle_rate() -> void:
 
 func _refresh_book() -> void:
 	main.toast("Checking for new chapters…")
-	var r := await Sources.refresh(book)
+	var r := await Sources.refresh(book, false, true)
 	book = Library.get_book(book.id)
 	main.toast(r.error if r.error != "" else "%d new chapter(s)" % r.new, "error" if r.error != "" else "ok")
 	_build_contents()
