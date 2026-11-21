@@ -219,16 +219,19 @@ static func updated_chapters(local_chapters: Array, entry: Dictionary, entries: 
 
 
 ## The detail fields an update writes: the newest version's fields, or just a
-## newer stamp and reading time when this device is newer.
-static func detail_fields(local: Dictionary, entry: Dictionary) -> Dictionary:
+## newer stamp and reading time when this device is newer. The status fields
+## are decided apart, over `entries` (every device's entry; just `entry` when
+## empty), see status_fields.
+static func detail_fields(local: Dictionary, entry: Dictionary, entries := []) -> Dictionary:
 	var remote_newer := num(entry.get("modified", 0)) > num(local.get("modified", 0))
 	var fields := {"modified": maxf(num(entry.get("modified", 0)), num(local.get("modified", 0)))}
 	if remote_newer:
-		for f in ["title", "author", "synopsis", "tags", "tags_set", "extra", "cover_url", "rss_only", "url", "source", "kind", "total_words", "dropped", "archived", "favorite"]:
+		for f in ["title", "author", "synopsis", "tags", "tags_set", "extra", "cover_url", "rss_only", "url", "source", "kind", "total_words"]:
 			if entry.has(f):
 				fields[f] = entry[f]
 	else:
 		fields["rss_only"] = local.get("rss_only", false)  # replace_chapters clears it
+	fields.merge(status_fields(local, entries if not entries.is_empty() else [entry]), true)
 	fields["last_checked"] = maxf(num(local.get("last_checked", 0)), num(entry.get("last_checked", 0)))
 	var local_full := num(local.get("last_full_check", 0))
 	var entry_full := num(entry.get("last_full_check", 0))
@@ -239,6 +242,55 @@ static func detail_fields(local: Dictionary, entry: Dictionary) -> Dictionary:
 	else:
 		fields["possible_gap"] = bool(local.get("possible_gap", false)) if local_full > entry_full else bool(entry.get("possible_gap", false))
 	return fields
+
+
+## The reader's own marks on a book, each stamped in status_set when changed.
+## They can't follow `modified`: every update check stamps that on each book it
+## checks, so a device that checked for updates after another archived a book
+## (archived books aren't checked there) would undo the archive.
+const STATUS_FIELDS := ["dropped", "archived", "favorite"]
+
+
+## The status fields that change here: per field, the value of its most recent
+## change on any device, plus every device's stamps combined. -> {} when this
+## device's values stand and its stamps are already the newest.
+static func status_fields(local: Dictionary, entries: Array) -> Dictionary:
+	var out := {}
+	var stamps := {}
+	for f in STATUS_FIELDS:
+		var best := local
+		var remote := false
+		for e in entries:
+			if e is Dictionary and (e as Dictionary).has(f) and status_newer(e, best, f):
+				best = e
+				remote = true
+		if remote:
+			out[f] = bool(best[f])
+		for d in [local] + entries:
+			if d is Dictionary and status_stamp(d, f) > num(stamps.get(f, 0)):
+				stamps[f] = status_stamp(d, f)
+	if not stamps.is_empty() and stamps != local.get("status_set", {}):
+		out["status_set"] = stamps
+	return out
+
+
+## Whether `a`'s value of status field `f` is a later change than `b`'s. Books
+## from before the stamps have none: a value ever set beats one never set
+## (the field is absent until then), else the newer version wins as before.
+static func status_newer(a: Dictionary, b: Dictionary, f: String) -> bool:
+	var ta := status_stamp(a, f)
+	var tb := status_stamp(b, f)
+	if ta != tb:
+		return ta > tb
+	if a.has(f) != b.has(f):
+		return a.has(f)
+	return num(a.get("modified", 0)) > num(b.get("modified", 0))
+
+
+## When status field `f` was last changed by hand, or 0 if never (or unknown).
+static func status_stamp(book: Dictionary, f: String) -> float:
+	var s: Variant = book.get("status_set", {})
+	return num((s as Dictionary).get(f, 0)) if s is Dictionary else 0.0
 
 
 ## Imported books have no chapter URLs, and chapters are only ever added to their

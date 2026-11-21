@@ -144,6 +144,9 @@ func b_first() -> void:
 	Library.update_book(w.id, {"chapters": w.chapters})
 	Library.store_chapter(w.id, 4, "Chapter 5", paras("web 4"))
 	Library.set_progress(w.id, 4, 1)
+	# a detail changed along with the new chapter: the other device's merge
+	# rewrites its chapter list first, which mustn't make its old details win
+	Library.update_book(w.id, {"synopsis": "Changed with a new chapter"})
 	# pick a cover by hand: it replaces the other device's cover there
 	var red := Image.create(8, 12, false, Image.FORMAT_RGB8)
 	red.fill(Color.RED)
@@ -156,6 +159,7 @@ func a_second() -> void:
 	var w := web_book()
 	check("new chapter in list", w.chapters.size(), 5)
 	check("new chapter text", Library.has_full_chapter(w.id, 4), true)
+	check("detail changed with a new chapter arrived", w.synopsis, "Changed with a new chapter")
 	check("progress from other device", w.progress, {"chapter": 4, "paragraph": 1})
 	var f := file_book()
 	var img := Image.load_from_file(f.cover)
@@ -172,6 +176,9 @@ func a_second() -> void:
 
 
 func b_second() -> void:
+	# An update check here, after the other device archived the book but before
+	# this one has seen it, makes this device's copy the newer one.
+	Library.update_book(web_book().id, {"last_checked": Time.get_unix_time_from_system()})
 	await sync()
 	check("removed book is gone", file_book().is_empty(), true)
 	check("one book", Library.books.size(), 1)

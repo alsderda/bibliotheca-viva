@@ -20,6 +20,7 @@ extends Node
 ##   dropped (true: the reader gave up on it; cleared when it's opened again, see set_dropped),
 ##   archived (true: put away; only the library's Archive tab shows it, and Favorites if it's a favorite, see set_archived),
 ##   favorite (true: also shown in the library's Favorites tab, see set_favorite),
+##   status_set ({dropped, archived, favorite} -> unix time each was last changed; see _set_status),
 ##   bookmarks: [{id, chapter, paragraph, name, text, created, modified, deleted}] (see add_bookmark)
 
 signal changed
@@ -204,9 +205,7 @@ func set_progress(id: String, chapter: int, paragraph: int) -> void:
 
 ## A dropped book leaves the Reading tab until it's opened again.
 func set_dropped(id: String, dropped: bool) -> void:
-	var b := get_book(id)
-	if not b.is_empty() and b.get("dropped", false) != dropped:
-		update_book(id, {"dropped": dropped})
+	_set_status(id, "dropped", dropped)
 
 
 ## Archiving takes a book out of the library's Reading, All, Ebooks and Web
@@ -214,20 +213,26 @@ func set_dropped(id: String, dropped: bool) -> void:
 ## Check for updates skips it (see UpdatesPage.followed); the Archive tab shows
 ## it, and Favorites still does if it's a favorite: a favorite you reread now and
 ## then without wanting it in Reading every time. Unlike dropped, opening the book
-## doesn't undo it; only set_archived(id, false) does. Changes `modified`, so sync
-## carries it.
+## doesn't undo it; only set_archived(id, false) does.
 func set_archived(id: String, archived: bool) -> void:
-	var b := get_book(id)
-	if not b.is_empty() and b.get("archived", false) != archived:
-		update_book(id, {"archived": archived})
+	_set_status(id, "archived", archived)
 
 
 ## A favorite shows in the library's Favorites tab as well as in its usual tabs,
-## archived or not. Changes `modified`, so sync carries it.
+## archived or not.
 func set_favorite(id: String, favorite: bool) -> void:
+	_set_status(id, "favorite", favorite)
+
+
+## Sets one of SyncMerge.STATUS_FIELDS and stamps the change, so sync carries
+## it even when another device changed the book later (see SyncMerge.status_fields).
+func _set_status(id: String, field: String, value: bool) -> void:
 	var b := get_book(id)
-	if not b.is_empty() and b.get("favorite", false) != favorite:
-		update_book(id, {"favorite": favorite})
+	if b.is_empty() or b.get(field, false) == value:
+		return
+	var stamps: Dictionary = (b.status_set as Dictionary).duplicate() if b.get("status_set") is Dictionary else {}
+	stamps[field] = Time.get_unix_time_from_system()
+	update_book(id, {field: value, "status_set": stamps})
 
 
 static func is_archived(book: Dictionary) -> bool:
