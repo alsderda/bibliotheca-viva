@@ -674,6 +674,10 @@ func _sentences() -> void:
 	var bb := "One [i]two. Three[/i] [lb]4[rb]."
 	check("visible text", ReaderPage._visible_text(bb), "One two. Three [4].")
 	check("mark sentence across tags", ReaderPage._mark_span(bb, 9, 19, "<", ">"), "One [i]two. <Three>[/i]< [lb]4[rb].>")
+	check("resume offset snaps to the cut word's start", LinuxVoice.resume_offset("Hello brave world", 9), 6)
+	check("resume offset at a word start stays", LinuxVoice.resume_offset("Hello brave world", 6), 6)
+	check("resume offset inside the first word restarts", LinuxVoice.resume_offset("Hello world", 3), 0)
+	check("resume offset past the end snaps to the last word", LinuxVoice.resume_offset("Hi you", 99), 3)
 
 
 func _pacing() -> void:
@@ -753,7 +757,7 @@ func _pacing() -> void:
 		Speech.toggle()  # pause: stops spd-say
 		await get_tree().create_timer(0.3).timeout
 		check("linux pause holds", Speech.playing and Speech.paused and Speech.current == 0, true)
-		Speech.toggle()  # resume: speaks the paragraph again
+		Speech.toggle()  # resume: speaks the rest of the paragraph
 		await Speech.reached_end
 		Speech.paragraph_started.disconnect(cb)
 		check("linux voice plays and resumes", started, [0, 1])
