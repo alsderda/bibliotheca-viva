@@ -2,7 +2,7 @@ extends Node
 ## Awaitable HTTP helpers, and the fetch manager that keeps the app polite to sites.
 ##
 ## Every request waits its turn in its site's queue: one request at a time, with
-## a gap after each one (1 s, or the plugin's "request_gap" in plugin.json).
+## a gap after each one (10 s, or the plugin's "request_gap" in plugin.json).
 ## Images wait in their host's queue too, ahead of pages, so covers show up quickly
 ## without any host getting more than one request at a time.
 ## A site that answers "busy" (HTTP 429 or 503) gets a break, its full Retry-After
@@ -26,7 +26,7 @@ extends Node
 ##
 ## Sync doesn't come through here: WebDav paces its own requests.
 
-const DEFAULT_GAP := 1.0
+const DEFAULT_GAP := 10.0
 const BUSY_WAIT_FIRST := 5.0
 const BUSY_WAIT_MAX := 120.0
 ## A busy site asking for a longer break than this fails the request instead of keeping it waiting.
