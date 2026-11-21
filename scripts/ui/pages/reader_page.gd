@@ -44,6 +44,11 @@ var _bookmarks_list: VBoxContainer
 var _menu_paragraph := -1        # paragraph the context menu was opened on
 var _press_timer: Timer          # long-press on a paragraph (touch screens)
 var _press_at := Vector2.ZERO
+var _tap := false                # the current touch is still a plain tap
+var _read_stack: Control         # the text and the floating bars live here
+var _sel_bar: SelectionBar       # touch selection pop-up over the text
+var _sel_paragraph := -1         # paragraph the selection bar was opened on
+var _sel_popup: PopupMenu        # the bar's "More" menu, if open
 var _sleep_btn: Button
 var _epub_dialog: FileDialog
 var _cover_dialog: FileDialog
@@ -57,6 +62,11 @@ const MENU_FIX_SPEECH := 100
 const MENU_SKIP_SPEECH := 101
 const MENU_REPLACE_TEXT := 102
 const MENU_BOOKMARK := 103
+
+const SEL_COPY := 200
+const SEL_BOOKMARK := 201
+const SEL_MORE := 202
+const SEL_COPY_PARA := 203
 
 const BOOKMARKS_TAB := 4
 
@@ -144,6 +154,7 @@ func build_actions(bar: HBoxContainer) -> void:
 
 
 func _on_tab(i: int) -> void:
+	_hide_selection_bar()
 	_read_view.visible = i == 0
 	_bg.visible = i == 0
 	_contents_view.visible = i == 1
@@ -200,6 +211,7 @@ func go_to_chapter(index: int, start_tts := false) -> void:
 
 
 func _load_chapter(paragraph: int) -> void:
+	_hide_selection_bar()
 	_load_token += 1
 	var token := _load_token
 	_loading = true
@@ -562,6 +574,7 @@ func _first_visible() -> int:
 
 
 func _on_scrolled(_v: float) -> void:
+	_hide_selection_bar()
 	_update_footer()
 	if not _restoring:
 		_save_timer.start()
@@ -629,6 +642,11 @@ func _build_read_view() -> void:
 	_text.get_v_scroll_bar().value_changed.connect(_on_scrolled)
 	_text.focus_mode = Control.FOCUS_CLICK
 	stack.add_child(_text)
+	_read_stack = stack
+	_sel_bar = SelectionBar.new()
+	_sel_bar.hide()
+	stack.add_child(_sel_bar)
+	_sel_bar.action.connect(_on_selection_action)
 
 	_status = UI.vbox(14)
 	_status.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -717,6 +735,7 @@ func set_compact(value: bool) -> void:
 	super(value)
 	if _contents_view == null:
 		return
+	_hide_selection_bar()
 	# The list scrolls vertically only, so anything wider than the screen
 	# pushes the chapter rows (and their download icons) off the right edge.
 	var side := 8 if compact else 24
@@ -853,11 +872,13 @@ func _build_bookmarks_view() -> void:
 func _build_bookmarks() -> void:
 	UI.clear(_bookmarks_list)
 	var marks := Library.bookmarks(book)
-	var how := "Long-press" if OS.has_feature("mobile") else "Right-click"
+	var mobile := OS.has_feature("mobile")
+	var how := "Long-press" if mobile else "Right-click"
+	var pick := "Bookmark" if mobile else "Bookmark this paragraph"
 	var side := 6 if compact else 12
 	_bookmarks_list.add_child(UI.margin(UI.label("%d bookmark%s" % [marks.size(), "" if marks.size() == 1 else "s"], "H2"), side, 0, side, 4))
 	if marks.is_empty():
-		var hint := UI.label("%s a paragraph while reading and choose “Bookmark this paragraph” to add one. You can give each bookmark a name." % how, "Muted", true)
+		var hint := UI.label("%s a paragraph while reading and choose “%s” to add one. You can give each bookmark a name." % [how, pick], "Muted", true)
 		_bookmarks_list.add_child(UI.margin(hint, side, 0, side, 0))
 		return
 	_bookmarks_list.add_child(UI.margin(UI.label("%s a paragraph while reading to add more." % how, "Small", true), side, 0, side, 8))
@@ -1439,6 +1460,7 @@ func _set_status_colors(c: Dictionary) -> void:
 func _apply_layout() -> void:
 	if _text == null:
 		return
+	_hide_selection_bar()
 	var col := float(Settings.get_value("column_width"))
 	var w := _text.size.x
 	var side := maxf(float(Settings.get_value("side_margin")), (w - col) / 2.0)
@@ -1563,25 +1585,136 @@ func _setup_context_menu() -> void:
 	_press_timer.one_shot = true
 	_press_timer.wait_time = 0.6
 	_press_timer.timeout.connect(func():
-		var i := _paragraph_at(_press_at)
-		if i >= 0 and _text.get_selected_text() == "":
-			_edit_bookmark(i))
+		_tap = false
+		# Off until the finger lifts: jitter of a held finger across a line edge
+		# would otherwise select a line's worth of text under the bar.
+		_text.selection_enabled = false
+		_text.focus_mode = Control.FOCUS_CLICK
+		_show_selection_bar(_press_at))
 	add_child(_press_timer)
 
 
-## Notes the paragraph under a right-click (for the menu) and opens the bookmark
-## dialog on a long press on touch screens, where there is no right-click.
+## Notes the paragraph under a right-click (for the menu). On touch screens a
+## long press or a touch release after selecting pops up the selection bar,
+## since there is no right-click.
 func _on_text_input(e: InputEvent) -> void:
 	if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_RIGHT:
 		_menu_paragraph = _paragraph_at(e.position)
 	elif e is InputEventScreenTouch:
-		_press_at = e.position
-		if e.pressed and not e.double_tap:
-			_press_timer.start()
+		if e.pressed:
+			_press_at = e.position
+			_tap = not e.double_tap
+			_hide_selection_bar()
+			if _tap:
+				_press_timer.start()
 		else:
 			_press_timer.stop()
+			var long_press := not _text.selection_enabled
+			if long_press:
+				_text.selection_enabled = true
+				_text.focus_mode = Control.FOCUS_CLICK
+			# A press only moves the nearest end of an existing selection (the label
+			# gets the emulated mouse press before this touch event), so without
+			# this a touch screen could never dismiss a selection. After a long
+			# press the label still holds what the jitter selected and brings it back.
+			if _tap or long_press:
+				_text.deselect.call_deferred()
+			else:
+				_maybe_show_selection_bar.call_deferred(e.position)
 	elif e is InputEventScreenDrag and e.position.distance_to(_press_at) > 12:
+		_tap = false
 		_press_timer.stop()
+
+
+## Shows the selection bar after a touch release, once the label has caught up
+## with the touch. Only when text ended up selected, so taps and scrolls do nothing.
+func _maybe_show_selection_bar(anchor: Vector2) -> void:
+	if _text.get_selected_text().strip_edges() == "":
+		return
+	_show_selection_bar(anchor)
+
+
+## Shows the selection bar at a touch point: Copy, Bookmark and More when text
+## is selected, Bookmark and Copy paragraph on a long press with no selection.
+func _show_selection_bar(anchor: Vector2) -> void:
+	if _items.is_empty():
+		return
+	var i := _paragraph_at(anchor)
+	if i < 0:
+		return
+	_sel_paragraph = i
+	_sel_bar.show_at(anchor, Rect2(Vector2.ZERO, _read_stack.size),
+		_selection_actions(_text.get_selected_text().strip_edges() != "", _bookmarked(i)))
+
+
+## Hides the selection bar and its More menu, if either is open.
+func _hide_selection_bar() -> void:
+	if is_instance_valid(_sel_bar):
+		_sel_bar.hide()
+	if is_instance_valid(_sel_popup):
+		_sel_popup.hide()
+		_sel_popup = null
+
+
+## Whether paragraph i of this chapter already has a bookmark.
+func _bookmarked(i: int) -> bool:
+	return i >= 0 and not Library.bookmark_at(book, chapter, i).is_empty()
+
+
+## The buttons for the touch selection bar: Copy, Bookmark and More with a
+## selection; Bookmark and Copy paragraph without one.
+static func _selection_actions(has_selection: bool, bookmarked: bool) -> Array:
+	var mark := {"id": SEL_BOOKMARK, "text": "Edit bookmark" if bookmarked else "Bookmark",
+		"icon": "bookmark_fill" if bookmarked else "bookmark"}
+	if not has_selection:
+		return [mark, {"id": SEL_COPY_PARA, "text": "Copy paragraph", "icon": "copy"}]
+	return [{"id": SEL_COPY, "text": "Copy", "icon": "copy"}, mark,
+		{"id": SEL_MORE, "text": "More", "icon": "more"}]
+
+
+func _on_selection_action(id: int) -> void:
+	match id:
+		SEL_COPY:
+			_copy_text(_text.get_selected_text().strip_edges())
+			_text.deselect()
+		SEL_COPY_PARA:
+			_copy_text(_paragraph_plain(_sel_paragraph))
+		SEL_BOOKMARK:
+			_edit_bookmark(_sel_paragraph)
+		SEL_MORE:
+			_show_more_menu()
+			return
+	_hide_selection_bar()
+
+
+## Copies text to the clipboard, if there is any, and says so.
+func _copy_text(s: String) -> void:
+	if s == "":
+		return
+	DisplayServer.clipboard_set(s)
+	main.toast("Copied.", "ok")
+
+
+## The paragraph's shown text, without BBCode, for copying.
+func _paragraph_plain(i: int) -> String:
+	if i < 0 or i >= _items.size():
+		return ""
+	return _visible_text(_items[i].bb).strip_edges()
+
+
+## The three selection rule actions as a pop-up, reusing the menu logic.
+func _show_more_menu() -> void:
+	_hide_selection_bar()
+	var menu := PopupMenu.new()
+	menu.add_item("Fix pronunciation of selection…", MENU_FIX_SPEECH)
+	menu.add_item("Don't read selection aloud…", MENU_SKIP_SPEECH)
+	menu.add_item("Replace selection in text…", MENU_REPLACE_TEXT)
+	add_child(menu)
+	_sel_popup = menu
+	menu.id_pressed.connect(_on_menu_item)
+	menu.popup_hide.connect(func(): menu.queue_free())
+	var r := _sel_bar.get_global_rect()
+	menu.popup(Rect2i(Vector2i(int(r.position.x), int(r.end.y + 4)), Vector2i.ZERO))
 
 
 ## The paragraph at a point in the text view, or -1.
