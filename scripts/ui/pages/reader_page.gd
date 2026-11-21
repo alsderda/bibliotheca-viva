@@ -995,7 +995,7 @@ func _build_details() -> void:
 	var archived: bool = Library.is_archived(book)
 	var arch := UI.button("Unarchive" if archived else "Archive", "archive", "", _toggle_archived)
 	arch.tooltip_text = "Put this book back in the library's other tabs" if archived \
-		else "Move this book to the library's Archive tab, out of Reading and the other tabs (a favorite stays in Favorites)"
+		else "Move this book to the library's Archive tab, out of Reading, the other tabs and Updates (a favorite stays in Favorites). It's only checked for new chapters from its chapter list."
 	buttons.add_child(arch)
 	var dropped: bool = book.get("dropped", false)
 	var drop := UI.button("Undo drop" if dropped else "Mark as dropped", "refresh" if dropped else "x", "", _toggle_dropped)

@@ -79,7 +79,7 @@ func refresh_all() -> void:
 	var errors := 0
 	var skipped := 0
 	var started := Time.get_ticks_msec()
-	var books := _web_books()
+	var books := followed()
 	_checked = 0
 	_to_check = books.size()
 	header_changed.emit()
@@ -105,8 +105,10 @@ func refresh_all() -> void:
 	header_changed.emit()
 
 
-func _web_books() -> Array:
-	return Library.books.filter(func(b): return b.kind == "web")
+## The web serials Updates shows and checks. Archived ones are left out, and
+## only the chapter list's Check for new button in the reader checks them.
+static func followed() -> Array:
+	return Library.books.filter(func(b): return b.kind == "web" and not Library.is_archived(b))
 
 
 func _rebuild() -> void:
@@ -114,12 +116,16 @@ func _rebuild() -> void:
 	if tab == SEARCHES_TAB:
 		_searches()
 		return
-	var books := _web_books()
+	var books := followed()
 	if books.is_empty():
 		var col := UI.vbox(8)
-		col.add_child(UI.label("No web serials yet", "H2"))
-		col.add_child(UI.label("Add a web serial and new chapters will show up here.", "Muted", true))
-		col.add_child(UI.margin(UI.button("Browse web novels", "compass", "PrimaryButton", func(): main.navigate("browse")), 0, 8, 0, 0))
+		if Library.books.any(func(b): return b.kind == "web"):
+			col.add_child(UI.label("All your web serials are archived", "H2"))
+			col.add_child(UI.label("Archived serials aren't checked for new chapters. Open one from the library's Archive tab and press Check for new in its chapter list, or unarchive it.", "Muted", true))
+		else:
+			col.add_child(UI.label("No web serials yet", "H2"))
+			col.add_child(UI.label("Add a web serial and new chapters will show up here.", "Muted", true))
+			col.add_child(UI.margin(UI.button("Browse web novels", "compass", "PrimaryButton", func(): main.navigate("browse")), 0, 8, 0, 0))
 		_content.add_child(col)
 		return
 	if tab == 0:
