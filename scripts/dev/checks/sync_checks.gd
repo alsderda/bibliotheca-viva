@@ -78,6 +78,22 @@ func _decisions(t: Node, key_of: Callable) -> void:
 		{"modified": 1.0, "last_full_check": 5.0, "possible_gap": false},
 		{"modified": 2.0, "last_full_check": 5.0, "possible_gap": true}).get("possible_gap"), true)
 
+	# An update check stamps `modified` on every book it checks; an archive made
+	# on another device before that must still win.
+	var checked_here := {"modified": 50.0, "last_checked": 50.0}
+	var archived_there := {"modified": 40.0, "archived": true, "status_set": {"archived": 30.0}}
+	var won := SyncMerge.detail_fields(checked_here, archived_there, [archived_there])
+	t.check("a newer status change wins over a newer update check", [won.get("archived"), won.get("status_set")], [true, {"archived": 30.0}])
+	var unarchived_here := {"modified": 20.0, "archived": false, "status_set": {"archived": 35.0}}
+	t.check("an older status change loses", SyncMerge.detail_fields(unarchived_here, archived_there, [archived_there]).has("archived"), false)
+	t.check("a status set before the stamps beats one never set", SyncMerge.status_fields(checked_here, [{"modified": 10.0, "archived": true}]), {"archived": true})
+	t.check("unstamped statuses on both sides follow the newer version", SyncMerge.status_fields(
+		{"modified": 50.0, "favorite": false}, [{"modified": 10.0, "favorite": true}]), {})
+	var three := SyncMerge.status_fields({}, [{"modified": 9.0, "favorite": false, "status_set": {"favorite": 2.0}},
+		{"modified": 1.0, "favorite": true, "status_set": {"favorite": 5.0}, "archived": true}])
+	t.check("the newest status change of any device wins", [three.get("favorite"), three.get("archived"), three.get("status_set")],
+		[true, true, {"favorite": 5.0}])
+
 	var docs := [{"settings": {"v": {"v": 1, "t": 5.0}}}, {"settings": {"v": {"v": 2, "t": 9.0}, "w": {"v": 1, "t": 3.0}}}]
 	t.check("newest setting wins", SyncMerge.winning_settings(docs, {}), {"v": {"v": 2, "t": 9.0}, "w": {"v": 1, "t": 3.0}})
 	t.check("older setting loses", SyncMerge.winning_settings(docs, {"v": 10.0}), {"w": {"v": 1, "t": 3.0}})

@@ -10,7 +10,7 @@ GODOT=${GODOT:-godot}
 run_godot() {
 	perl -e 'alarm 300; exec @ARGV' "$GODOT" "$@"
 }
-USERDATA=$(run_godot --headless --path "$(dirname "$0")/../.." -s res://scripts/dev/print_userdir.gd 2>/dev/null | tail -1)
+USERDATA=$(run_godot --headless --path "$(dirname "$0")/../.." -s res://scripts/dev/print_userdir.gd -- --profile=synctest_a 2>/dev/null | tail -1)
 cd "$(dirname "$0")/../.." || exit 1
 rm -rf "$USERDATA/profiles/synctest_a" "$USERDATA/profiles/synctest_b"
 if [ -n "$2" ]; then

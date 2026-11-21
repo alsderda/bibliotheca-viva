@@ -28,6 +28,8 @@ extends Node
 ## the next one. Each device reads the other devices' files and merges them into
 ## its library:
 ##   - book details: the most recently changed version wins
+##     (except dropped, archived and favorite: the most recent change of each wins,
+##     see SyncMerge.status_fields)
 ##   - reading position: the most recently read version wins
 ##   - chapter lists: combined, so chapters saved on either device are kept
 ##     (an imported book's list only grows at the end: the longest one wins)
@@ -726,27 +728,31 @@ func _create_book(key: String, e: Dictionary, entries: Array) -> Dictionary:
 		"cover_url": e.get("cover_url", ""), "synopsis": e.get("synopsis", ""), "tags": e.get("tags", []),
 		"tags_set": bool(e.get("tags_set", false)),
 		"extra": e.get("extra", {}), "rss_only": e.get("rss_only", false), "chapters": chapters,
-		"total_words": SyncMerge.to_int(e.get("total_words", 0)), "dropped": bool(e.get("dropped", false)),
-		"archived": bool(e.get("archived", false)), "favorite": bool(e.get("favorite", false)),
+		"total_words": SyncMerge.to_int(e.get("total_words", 0)),
 		"added": SyncMerge.num(e.get("added", 0)), "last_checked": SyncMerge.num(e.get("last_checked", 0)), "modified": SyncMerge.num(e.get("modified", 0)),
 		"last_full_check": SyncMerge.num(e.get("last_full_check", 0)), "possible_gap": bool(e.get("possible_gap", false)),
-	})
+	}.merged(SyncMerge.status_fields({}, entries)))
 
 
 func _update_book(local: Dictionary, e: Dictionary, entries: Array) -> void:
 	var remote_newer := SyncMerge.num(e.get("modified", 0)) > SyncMerge.num(local.get("modified", 0))
+	# Decided before replace_chapters, which stamps `modified` with now: after
+	# it, this device's version would always look newer and the other device's
+	# details (an archive, an edit) would be dropped whenever its chapter list
+	# had chapters this one lacks.
+	var fields := SyncMerge.detail_fields(local, e, entries)
 	var list_changed := false
 	var merged := SyncMerge.updated_chapters(local.chapters, e, entries, remote_newer, Library.chapter_key)
 	if SyncMerge.has_urls(local.chapters):
 		if SyncMerge.chapter_ids(merged, Library.chapter_key) != _chapter_ids(local.chapters):
 			Library.replace_chapters(local.id, merged)
+			list_changed = true  # writes `modified` back from fields
 	elif merged.size() > local.chapters.size():
 		for i in local.chapters.size():  # same chapters at the start: keep their word counts
 			if local.chapters[i].has("words"):
 				merged[i].words = local.chapters[i].words
 		local.chapters = merged
 		list_changed = true
-	var fields := SyncMerge.detail_fields(local, e)
 	if list_changed or fields.keys().any(func(f): return local.get(f) != fields[f]):
 		Library.update_book(local.id, fields)
 
@@ -854,6 +860,8 @@ func _book_file(b: Dictionary, flags: String) -> Dictionary:
 		out.archived = bool(b.archived)
 	if b.has("favorite"):
 		out.favorite = bool(b.favorite)
+	if b.get("status_set") is Dictionary and not (b.status_set as Dictionary).is_empty():
+		out.status_set = b.status_set
 	return out
 
 

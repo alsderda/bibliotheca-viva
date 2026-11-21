@@ -534,6 +534,7 @@ func _archive_favorite() -> void:
 	var file: Dictionary = Sync._book_file(Library.get_book(b.id), "")
 	check("archived in the synced file", file.get("archived", false), true)
 	check("favorite in the synced file", file.get("favorite", false), true)
+	check("status changes stamped in the synced file", (file.get("status_set", {}) as Dictionary).keys().size(), 2)
 	Library.set_archived(b.id, false)
 	check("unarchived", Library.is_archived(Library.get_book(b.id)), false)
 	check("favorite kept through the archive", Library.is_favorite(Library.get_book(b.id)), true)
