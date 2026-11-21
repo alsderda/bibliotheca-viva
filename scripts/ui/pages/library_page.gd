@@ -473,6 +473,8 @@ func _hero(book: Dictionary) -> Control:
 	var cover := CoverView.new()
 	cover.radius = 8
 	cover.custom_minimum_size = Vector2(92, 138) if not compact else Vector2(64, 96)
+	# the row grows with a wrapping title; filling it would stretch the cover out of 2:3
+	cover.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	cover.set_book(book)
 	row.add_child(cover)
 	var info := UI.vbox(6)
