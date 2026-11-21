@@ -469,10 +469,11 @@ func _plugin_name(id: String) -> String:
 
 func _hero(book: Dictionary) -> Control:
 	var card := UI.panel("Card")
+	var col := UI.vbox(10)
 	var row := UI.hbox(14 if compact else 22)
 	var cover := CoverView.new()
 	cover.radius = 8
-	cover.custom_minimum_size = Vector2(92, 138) if not compact else Vector2(64, 96)
+	cover.custom_minimum_size = Vector2(112, 168) if not compact else Vector2(80, 120)
 	# the row grows with a wrapping title; filling it would stretch the cover out of 2:3
 	cover.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	cover.set_book(book)
@@ -490,11 +491,12 @@ func _hero(book: Dictionary) -> Control:
 	var sub := UI.label(("%s  ·  %s" % [ch_title, where]) if ch_title != "" else where, "Muted")
 	sub.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	sub.custom_minimum_size.x = 120
-	info.add_child(sub)
+	var details := UI.vbox(6)
+	details.add_child(sub)
 	var bar := UI.progress(Library.progress_ratio(book), 4)
 	bar.custom_minimum_size.x = 120
 	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	info.add_child(UI.margin(bar, 0, 6, 0, 8))
+	details.add_child(UI.margin(bar, 0, 6, 0, 8))
 	var buttons := UI.hbox(10)
 	buttons.add_child(UI.button("Continue", "book", "PrimaryButton", func(): main.open_reader(book.id)))
 	buttons.add_child(UI.button("" if compact else "Listen", "headphones", "", func():
@@ -503,9 +505,23 @@ func _hero(book: Dictionary) -> Control:
 		var reader: ReaderPage = main.pages.reader
 		if main.current == reader and reader.book.get("id", "") == want:
 			reader.start_tts()))
-	info.add_child(buttons)
+	details.add_child(buttons)
+	info.add_child(details)
 	row.add_child(info)
-	card.add_child(row)
+	col.add_child(row)
+	card.add_child(col)
+	# With a title too tall to leave room beside the cover, the details move under the
+	# cover and use the card's full width. Moving them doesn't change the title column's
+	# width, so the choice can't flip back and forth.
+	var place := func():
+		if not is_instance_valid(details):
+			return
+		var sep := info.get_theme_constant("separation")
+		var beside := t.position.y + t.size.y + sep + details.get_combined_minimum_size().y
+		var want: Control = col if beside > cover.size.y + 1 else info
+		if details.get_parent() != want:
+			details.reparent(want, false)
+	info.resized.connect(func(): place.call_deferred())
 	return card
 
 
