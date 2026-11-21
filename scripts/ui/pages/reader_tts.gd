@@ -8,8 +8,10 @@ extends RefCounted
 
 ## Chapters handed to the speech service ahead of time on Android, so reading carries on
 ## while the app is in the background (where the reader can't load the next chapter).
-## A few, for listening where there's no signal; more would download chapters nobody hears.
+## A few downloaded, for listening where there's no signal; more would download chapters
+## nobody hears. Chapters already saved in full cost no download, so those reach further.
 const CHAPTERS_AHEAD := 3
+const SAVED_AHEAD := 30
 
 var page: ReaderPage
 var highlight := -1          # paragraph being read, or -1
@@ -106,9 +108,15 @@ func queue_upcoming() -> void:
 	_upcoming_token += 1
 	var token := _upcoming_token
 	var id: String = page.book.id
-	while Speech.playing and Speech.source_owner == "reader" and Speech.chapters_ahead() < CHAPTERS_AHEAD:
-		var index := page.chapter + Speech.chapters_ahead() + 1
+	while Speech.playing and Speech.source_owner == "reader":
+		var ahead := Speech.chapters_ahead()
+		var index := page.chapter + ahead + 1
 		if index >= page.book.chapters.size():
+			return
+		if ahead >= SAVED_AHEAD:
+			return
+		var saved := Library.has_full_chapter(id, index)
+		if ahead >= CHAPTERS_AHEAD and not saved:
 			return
 		var data: Dictionary = Library.load_chapter(id, index)
 		if data.is_empty() or data.get("excerpt", false):
@@ -118,6 +126,10 @@ func queue_upcoming() -> void:
 		if data.has("error") and not data.has("paragraphs"):
 			return  # the reader will try again when it gets there
 		Speech.append_chapter(ReaderPage._speech_items(page._make_items(data, index)), page.book.chapters[index].title)
+		if saved:
+			await page.get_tree().process_frame
+			if token != _upcoming_token or page.book.get("id", "") != id:
+				return
 
 
 ## The speech service moved on to a chapter that queue_upcoming() handed over.
