@@ -106,6 +106,4 @@ func _load() -> void:
 
 
 func _save() -> void:
-	var f := FileAccess.open(_path(), FileAccess.WRITE)
-	if f:
-		f.store_string(JSON.stringify({"checked_at": _checked_at, "latest": latest, "url": latest_url, "prerelease": latest_prerelease}, "\t"))
+	SafeFile.write_text(_path(), JSON.stringify({"checked_at": _checked_at, "latest": latest, "url": latest_url, "prerelease": latest_prerelease}, "\t"))

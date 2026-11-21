@@ -39,6 +39,10 @@ var revisions := {}
 var _dirty := {}  # book id -> true: its meta file needs writing
 var _index_dirty := false
 var _flush_queued := false
+## Raw index entries whose book couldn't be loaded (meta file missing or
+## damaged): kept out of `books` but written back unchanged by flush(), so a
+## book the app can't read is never forgotten by the next save.
+var _kept: Array = []
 ## Lowercase alias -> main tag from the "tag_aliases" setting; null until needed.
 ## Cached because matches_tag runs once per book on every filter pass.
 var _aliases_cache: Variant = null
@@ -148,6 +152,7 @@ func add_book(data: Dictionary) -> Dictionary:
 	}
 	book.merge(data, true)
 	books.append(book)
+	_forget_kept(str(book.get("id", "")))
 	save(book.id)
 	changed.emit()
 	return book
@@ -174,6 +179,7 @@ func remove_book(id: String, tombstone := true) -> void:
 		tombstones[sync_key(b)] = Time.get_unix_time_from_system()
 	books.erase(b)
 	_dirty.erase(id)
+	_forget_kept(id)
 	revisions.erase(id)
 	_remove_dir(book_dir(id))
 	if b.cover != "" and FileAccess.file_exists(b.cover):
@@ -323,10 +329,7 @@ func load_chapter(id: String, index: int) -> Dictionary:
 
 func store_chapter(id: String, index: int, title: String, paragraphs: PackedStringArray, excerpt := false) -> void:
 	DirAccess.make_dir_recursive_absolute(book_dir(id))
-	var f := FileAccess.open("%s/%d.json" % [book_dir(id), index], FileAccess.WRITE)
-	if f:
-		f.store_string(JSON.stringify({"title": title, "paragraphs": Array(paragraphs), "excerpt": excerpt}))
-		f.close()
+	if SafeFile.write_text("%s/%d.json" % [book_dir(id), index], JSON.stringify({"title": title, "paragraphs": Array(paragraphs), "excerpt": excerpt})):
 		if not excerpt:
 			var b := get_book(id)
 			if index < b.get("chapters", []).size():
@@ -478,7 +481,8 @@ func save_cover(id: String, image: Image) -> String:
 		image.resize(400, int(image.get_height() * 400.0 / image.get_width()), Image.INTERPOLATE_LANCZOS)
 	DirAccess.make_dir_recursive_absolute(Settings.data_dir() + "/covers")
 	var path := "%s/covers/%s.png" % [Settings.data_dir(), id]
-	image.save_png(path)
+	if not SafeFile.write_bytes(path, image.save_png_to_buffer()):
+		return ""
 	return path
 
 
@@ -725,11 +729,8 @@ func read_file(path: String) -> Dictionary:
 			return {"error": "Could not read the selected file"}
 		kind = "epub" if bytes.slice(0, 4) == PackedByteArray([0x50, 0x4B, 0x03, 0x04]) else "txt"
 		source = "user://import.%s" % kind
-		var f := FileAccess.open(source, FileAccess.WRITE)
-		if f == null:
+		if not SafeFile.write_bytes(source, bytes):
 			return {"error": "Could not copy the selected file"}
-		f.store_buffer(bytes)
-		f.close()
 	var parsed: Dictionary
 	match kind:
 		"epub":
@@ -1100,53 +1101,70 @@ func save_index() -> void:
 
 
 ## Writes what save and save_index marked. Meta files go first, so library.json
-## never lists a book whose file isn't there.
-func flush() -> void:
+## never lists a book whose file isn't there. A write that fails stays marked,
+## so the next save/flush tries again.
+func flush(dir := "") -> void:
 	_flush_queued = false
+	var d := dir if dir != "" else Settings.data_dir()
 	if not _dirty.is_empty():
-		DirAccess.make_dir_recursive_absolute(Settings.data_dir() + "/meta")
-	for id in _dirty:
+		DirAccess.make_dir_recursive_absolute(d + "/meta")
+	for id in _dirty.keys():
 		var b := get_book(id)
-		if not b.is_empty():
-			var meta := b.duplicate()
-			for f in INDEX_FIELDS:
-				meta.erase(f)
-			_write(_meta_path(id), JSON.stringify(meta))
-	_dirty.clear()
+		if b.is_empty():
+			_dirty.erase(id)
+			continue
+		var meta := b.duplicate()
+		for f in INDEX_FIELDS:
+			meta.erase(f)
+		if _write(_meta_path(id, d), JSON.stringify(meta)):
+			_dirty.erase(id)
 	if _index_dirty:
-		_index_dirty = false
 		var list := books.map(func(b):
 			var e := {"id": b.id}
 			for f in INDEX_FIELDS:
 				if b.has(f):
 					e[f] = b[f]
 			return e)
-		_write(Settings.data_dir() + "/library.json", JSON.stringify({"version": 2, "books": list, "tombstones": tombstones}))
+		for k in _kept:
+			list.append(k)
+		if _write(d + "/library.json", JSON.stringify({"version": 2, "books": list, "tombstones": tombstones})):
+			_index_dirty = false
 
 
-func _meta_path(id: String) -> String:
-	return "%s/meta/%s.json" % [Settings.data_dir(), id]
+func _meta_path(id: String, dir := "") -> String:
+	var d := dir if dir != "" else Settings.data_dir()
+	return "%s/meta/%s.json" % [d, id]
 
 
-## Writes to a temporary file first, so a crash part way leaves the old file.
-static func _write(path: String, text: String) -> void:
-	var f := FileAccess.open(path + ".tmp", FileAccess.WRITE)
-	if f == null:
-		push_error("Library: can't write %s" % path)
-		return
-	f.store_string(text)
-	f.close()
-	if DirAccess.rename_absolute(path + ".tmp", path) != OK:
-		DirAccess.remove_absolute(path)
-		DirAccess.rename_absolute(path + ".tmp", path)
+## Through SafeFile, so a crash part way leaves the old file. -> true when
+## the new text is in place.
+static func _write(path: String, text: String) -> bool:
+	return SafeFile.write_text(path, text)
+
+
+## Drops a kept unreadable entry once its book is back (added again) or
+## deliberately gone (removed): neither may resurrect it on the next flush.
+func _forget_kept(id: String) -> void:
+	_kept = _kept.filter(func(e): return not (e is Dictionary and str(e.get("id", "")) == id))
 
 
 func _load() -> void:
-	var path := Settings.data_dir() + "/library.json"
+	_load_from(Settings.data_dir())
+
+
+## Reads the book list in `dir` (its library.json and meta/); `_load` is this
+## with the profile's folder. Unreadable books stay out of `books` but their
+## raw index entries are kept for flush(), so they survive the next save.
+func _load_from(dir: String) -> void:
+	books = []
+	_kept = []
+	var path := dir + "/library.json"
 	if not FileAccess.file_exists(path):
 		return
 	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
 	if not (parsed is Dictionary and parsed.get("books") is Array):
+		_keep_damaged(path)
+		push_error("Library: %s is damaged, kept a copy next to it; starting with an empty library" % path)
 		return
 	if parsed.get("tombstones") is Dictionary:
 		tombstones = parsed.tombstones
@@ -1155,23 +1173,71 @@ func _load() -> void:
 	else:
 		for e in parsed.books:
 			if not (e is Dictionary and e.has("id")):
+				_kept.append(e)
+				push_error("Library: an index entry has no id; keeping it out of the way")
 				continue
-			var meta: Variant = JSON.parse_string(FileAccess.get_file_as_string(_meta_path(e.id))) if FileAccess.file_exists(_meta_path(e.id)) else null
+			var id := str(e.id)
+			var mpath := _meta_path(id, dir)
+			var meta: Variant = JSON.parse_string(FileAccess.get_file_as_string(mpath)) if FileAccess.file_exists(mpath) else null
 			if not (meta is Dictionary):
-				push_error("Library: details of book %s are missing" % e.id)
+				if FileAccess.file_exists(mpath):
+					_keep_damaged(mpath)
+				_kept.append(e)
+				push_error("Library: details of book %s are missing or damaged; keeping its place in the book list" % id)
 				continue
 			meta.merge(e, true)
+			_normalize(meta)
 			books.append(meta)
-	for b in books:  # JSON numbers come back as floats
-		b.progress = {"chapter": int(b.progress.chapter), "paragraph": int(b.progress.paragraph)}
-		for m in b.get("bookmarks", []):
-			m.chapter = int(m.chapter)
-			m.paragraph = int(m.paragraph)
+	for b in books:
+		_normalize(b)
 		if not b.has("modified"):
 			b.modified = maxf(b.get("added", 0), b.get("last_checked", 0))
 	if int(parsed.get("version", 1)) < 2:
 		save()
-		flush()
+		flush(dir)
+
+
+## Renames a damaged file next to itself with a `.bad-<unix seconds>` suffix,
+## so the bytes stay on disk to recover.
+static func _keep_damaged(path: String) -> void:
+	DirAccess.rename_absolute(path, "%s.bad-%d" % [path, int(Time.get_unix_time_from_system())])
+
+
+## Fills in what the load loop and progress_ratio/is_finished read straight
+## off a book, so a meta file with missing or wrongly typed fields loads
+## instead of crashing: progress defaults to the start, chapters to none, and
+## bookmarks to only well-formed ones.
+static func _normalize(b: Dictionary) -> void:
+	var p: Variant = b.get("progress", {})
+	if not (p is Dictionary):
+		p = {}
+	b.progress = {"chapter": _num(p.get("chapter", 0)), "paragraph": _num(p.get("paragraph", 0))}
+	if not (b.get("chapters") is Array):
+		b.chapters = []
+	else:
+		b.chapters = b.chapters.filter(func(c): return c is Dictionary)
+		for c in b.chapters:
+			c.title = str(c.get("title", ""))
+			if c.has("url"):
+				c.url = str(c.url)
+	var marks := []
+	if b.get("bookmarks") is Array:
+		for m in b.bookmarks:
+			if m is Dictionary and m.has("chapter") and m.has("paragraph"):
+				m.chapter = _num(m.get("chapter"))
+				m.paragraph = _num(m.get("paragraph"))
+				marks.append(m)
+	b.bookmarks = marks
+
+
+static func _num(v: Variant) -> int:
+	if v is int:
+		return v
+	if v is float:
+		return int(v)
+	if v is String and v.is_valid_int():
+		return v.to_int()
+	return 0
 
 
 func _new_id() -> String:

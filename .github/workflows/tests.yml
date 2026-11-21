@@ -49,3 +49,47 @@ jobs:
           set -o pipefail
           timeout 600 ~/godot/godot --headless --path . -- --profile=selftest --selftest 2>&1 | tee selftest.log
           grep -q "^SELFTEST PASSED" selftest.log
+
+  synctest:
+    name: Sync test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Godot
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/godot
+          key: godot-${{ env.GODOT_VERSION }}
+
+      - name: Download Godot
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/godot && cd ~/godot
+          curl -fsSL -o godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          unzip -q godot.zip && rm godot.zip
+          mv Godot_v*_linux.x86_64 godot
+
+      - name: Import project
+        run: timeout 300 ~/godot/godot --headless --path . --import
+
+      - name: Start WebDAV server
+        run: |
+          pip install wsgidav cheroot
+          mkdir -p /tmp/dav
+          wsgidav --host 127.0.0.1 --port 8089 --root /tmp/dav --auth anonymous &
+          for i in $(seq 1 15); do
+            curl -m 2 -s -o /dev/null http://127.0.0.1:8089/ && break
+            sleep 2
+          done
+          curl -m 2 -s -o /dev/null http://127.0.0.1:8089/
+
+      # The script wipes its own synctest_a/synctest_b profiles first, and only
+      # passes if it printed ALL SYNC TESTS PASSED (it exits non-zero otherwise).
+      - name: Run sync test
+        run: |
+          set -o pipefail
+          GODOT=~/godot/godot timeout 900 scripts/dev/synctest.sh http://127.0.0.1:8089/ 2>&1 | tee synctest.log
+          grep -q "^ALL SYNC TESTS PASSED" synctest.log

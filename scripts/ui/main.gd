@@ -210,14 +210,16 @@ func navigate(key: String) -> void:
 	_refresh_listening()
 
 
+## Shows the reader for the book and waits until its chapter has loaded (or failed),
+## so a caller can start reading aloud as soon as this returns.
 func open_reader(book_id: String, chapter := -1) -> void:
 	var reader: ReaderPage = pages.reader
 	reader.tab = 0
-	reader.open_book(book_id, chapter)
+	if current != reader:
+		navigate("reader")
+	await reader.open_book(book_id, chapter)
 	if current == reader:
 		_rebuild_topbar()
-	else:
-		navigate("reader")
 
 
 ## Updates → Saved searches.

@@ -82,7 +82,7 @@ var _secret_thread: Thread   # reads or saves the password (see Keyring)
 ##   local: book id -> {stamp, full: [chapter indexes]}: its chapters saved here
 ##     with their full text, as of its text_stamp (saves opening every file)
 ##   covers: book id -> {sig, cover}: the state of its cover when it was last
-##     found to be on both sides (see _cover_sig)
+##     found to be on both sides (see SyncMerge.cover_sig)
 ##   missing: book id -> [chapter ids]: what goes in index.json's `missing`
 var _cache := _empty_cache()
 var _indexes := {}           # device id -> {etag, data}: other devices' index.json
@@ -194,6 +194,13 @@ func configure(url: String, user: String, password: String) -> void:
 		_remote_books.clear()
 		_remove_tree(_remote_dir())
 		_done.clear()
+		# _pack_ids and _cover_names name files on the server, which another
+		# server reuses for other packs and covers. _md5s and _ids stay: they
+		# describe this device's files and check themselves before use (the
+		# server's on_server flags are part of the _md5s key, and _ids is
+		# only used while the chapter list is the same object).
+		_pack_ids.clear()
+		_cover_names.clear()
 		_state.uploaded_md5 = ""
 		_state.uploaded_books = {}
 	_state.url = url
@@ -376,7 +383,7 @@ func _run_with(dav: WebDav, pool: Array[WebDav]) -> String:
 		var exists := folders.has(_folder_name(key))
 		if not exists:
 			_cache.server.erase(b.id)  # its folder is gone (or never was): nothing of it is there
-		var sig := _cover_sig(b, exists, wanted)
+		var sig := SyncMerge.cover_sig(b, exists, wanted)
 		var last: Dictionary = _cache.covers.get(b.id, {})
 		if last.get("sig", "") == sig and not _chapters_differ(b, flagged.get(key, {})):
 			if last.get("cover", "") != "":
@@ -437,6 +444,17 @@ func _fetch_device(dav: WebDav, pool: Array[WebDav], id: String) -> Dictionary:
 		c = {"etag": etag, "data": data}
 		_indexes[id] = c
 	var index: Dictionary = c.data
+	# Malformed entries never reach the merge: without this, one damaged
+	# entry aborts _merge halfway (a GDScript runtime error only ends the
+	# function it hits) and leaves the library half-merged.
+	var checked := SyncMerge.sanitize_device_doc(index)
+	if (checked.doc as Dictionary).is_empty():
+		return {}
+	index = checked.doc
+	c.data = index
+	if int(checked.dropped) > 0:
+		var dev: Dictionary = index.get("device", {})
+		print("Sync: dropped %d malformed entries from device %s" % [checked.dropped, str(dev.get("name", id))])
 	if not _cache.devices.has(id):
 		_cache.devices[id] = {}
 	var have: Dictionary = _cache.devices[id]
@@ -561,7 +579,7 @@ func _upload_own(dav: WebDav, pool: Array[WebDav]) -> String:
 			_md5s[b.id] = [rev, cover, flags, md5]
 		if md5 != uploaded.get(key, "") or not on_server.has(name):
 			jobs.append({"key": key, "path": base + "books/" + name, "body": body, "md5": md5})
-		entries.append(_index_entry(b, key, md5))
+		entries.append(SyncMerge.index_entry(b, key, md5, Library.chapter_key))
 	if not jobs.is_empty():
 		var work := {"done": 0, "total": jobs.size()}
 		var err := await _in_parallel(pool, jobs, _put_book_file.bind(work))
@@ -654,58 +672,40 @@ func _merge(remote: Array) -> Dictionary:
 					Library.tombstones[k] = float(tomb[k])
 					Library.save_index()
 
-	var meta := {}    # key -> newest entry by modified
-	var pos := {}     # key -> newest entry by last_read
-	var all := {}     # key -> every entry
+	var grouped := SyncMerge.group_by_key(remote)
 	var covers := {}
-	for d in remote:
-		for e in d.books:
-			if not (e is Dictionary and e.has("key")):
-				continue
-			var k: String = e.key
-			if not meta.has(k) or float(e.modified) > float(meta[k].modified):
-				meta[k] = e
-			if not pos.has(k) or float(e.last_read) > float(pos[k].last_read):
-				pos[k] = e
-			if not all.has(k):
-				all[k] = []
-			all[k].append(e)
-			if e.get("cover", "") != "" and (not covers.has(k) or _cover_newer(e, covers[k])):
-				covers[k] = e
-	for k in covers:
-		covers[k] = {"name": covers[k].cover, "set": float(covers[k].get("cover_set", 0))}
+	for k in grouped:
+		var pick := SyncMerge.pick_cover(grouped[k].all)
+		if not pick.is_empty():
+			covers[k] = pick
 
-	for k in meta:
-		var e: Dictionary = meta[k]
+	for k in grouped:
+		var e: Dictionary = grouped[k].meta
 		var local := Library.find_by_sync_key(k)
-		var activity := maxf(float(e.modified), float(pos[k].last_read))
+		var activity := maxf(SyncMerge.num(e.get("modified", 0)), SyncMerge.num(grouped[k].pos.get("last_read", 0)))
 		if not local.is_empty():
-			activity = maxf(activity, _activity(local))
-		if float(Library.tombstones.get(k, 0.0)) >= activity:
+			activity = maxf(activity, SyncMerge.activity_of(local))
+		if SyncMerge.tombstone_removes(SyncMerge.num(Library.tombstones.get(k, 0.0)), activity):
 			if not local.is_empty():
 				Library.remove_book(local.id, false)
 			continue
 		if local.is_empty():
-			local = _create_book(k, e, all[k])
+			local = _create_book(k, e, grouped[k].all)
 		else:
-			_update_book(local, e, all[k])
-		var marks := _merged_bookmarks(local, all[k])
+			_update_book(local, e, grouped[k].all)
+		var marks := _merged_bookmarks(local, grouped[k].all)
 		if marks != local.get("bookmarks", []):
 			Library.set_bookmarks(local.id, marks)
-		var p: Dictionary = pos[k]
-		if float(p.last_read) > float(local.get("last_read", 0)):
-			var prog: Dictionary = p.get("progress", {})
-			var idx := _chapter_index_by_id(local, str(prog.get("id", "")))
-			if idx < 0:
-				idx = clampi(int(prog.get("chapter", 0)), 0, maxi(0, local.chapters.size() - 1))
-			local.progress = {"chapter": idx, "paragraph": int(prog.get("paragraph", 0))}
-			local.last_read = float(p.last_read)
+		var moving := SyncMerge.newer_progress(local, grouped[k].pos, Library.chapter_key)
+		if not moving.is_empty():
+			local.progress = moving.progress
+			local.last_read = float(moving.last_read)
 			Library.save_index()
 			Library.book_changed.emit(local.id)
 			Library.changed.emit()
 
 	for b in Library.books.duplicate():
-		if float(Library.tombstones.get(Library.sync_key(b), 0.0)) >= _activity(b):
+		if SyncMerge.tombstone_removes(SyncMerge.num(Library.tombstones.get(Library.sync_key(b), 0.0)), SyncMerge.activity_of(b)):
 			Library.remove_book(b.id, false)
 
 	_merge_rules(remote)
@@ -713,212 +713,86 @@ func _merge(remote: Array) -> Dictionary:
 	return covers
 
 
-## This book's bookmarks plus the other devices' ones: per bookmark, the most
-## recently changed version wins (a removal too). Chapters are matched by id, as
-## the chapter indexes can differ between devices.
+## SyncMerge's rule with this app's chapter keys.
 static func _merged_bookmarks(local: Dictionary, entries: Array) -> Array:
-	var out: Array = local.get("bookmarks", []).duplicate(true)
-	var at := {}
-	for i in out.size():
-		at[out[i].id] = i
-	for e in entries:
-		var list: Variant = e.get("bookmarks", [])
-		if not list is Array:
-			continue
-		for r in list:
-			if not (r is Dictionary and r.has("id")):
-				continue
-			var i: int = at.get(r.id, -1)
-			if i >= 0 and float(r.get("modified", 0)) <= float(out[i].modified):
-				continue
-			var ch := _chapter_index_by_id(local, str(r.get("chapter_id", "")))
-			if ch < 0:
-				ch = clampi(int(r.get("chapter", 0)), 0, maxi(0, local.chapters.size() - 1))
-			var m := {
-				"id": str(r.id), "chapter": ch, "paragraph": int(r.get("paragraph", 0)), "name": str(r.get("name", "")),
-				"text": str(r.get("text", "")), "created": float(r.get("created", 0)), "modified": float(r.get("modified", 0)),
-				"deleted": bool(r.get("deleted", false)),
-			}
-			if i >= 0:
-				out[i] = m
-			else:
-				at[m.id] = out.size()
-				out.append(m)
-	return out
-
-
-## The cover picked by hand last wins, else the one of the newest version.
-static func _cover_newer(a: Dictionary, b: Dictionary) -> bool:
-	var sa := float(a.get("cover_set", 0))
-	var sb := float(b.get("cover_set", 0))
-	return sa > sb if sa != sb else float(a.modified) > float(b.modified)
+	return SyncMerge.merged_bookmarks(local, entries, Library.chapter_key)
 
 
 func _create_book(key: String, e: Dictionary, entries: Array) -> Dictionary:
-	var chapters := _combined_chapters(_clean_chapters(e.get("chapters", [])), entries)
+	var chapters := SyncMerge.combined_chapters(SyncMerge.clean_chapters(e.get("chapters", [])), entries, Library.chapter_key)
 	return Library.add_book({
 		"sync_key": key, "title": e.get("title", "Untitled"), "author": e.get("author", ""),
 		"kind": e.get("kind", "web"), "source": e.get("source", "web"), "url": e.get("url", ""),
 		"cover_url": e.get("cover_url", ""), "synopsis": e.get("synopsis", ""), "tags": e.get("tags", []),
 		"extra": e.get("extra", {}), "rss_only": e.get("rss_only", false), "chapters": chapters,
-		"total_words": int(e.get("total_words", 0)), "dropped": bool(e.get("dropped", false)),
+		"total_words": SyncMerge.to_int(e.get("total_words", 0)), "dropped": bool(e.get("dropped", false)),
 		"archived": bool(e.get("archived", false)), "favorite": bool(e.get("favorite", false)),
-		"added": float(e.get("added", 0)), "last_checked": float(e.get("last_checked", 0)), "modified": float(e.modified),
+		"added": SyncMerge.num(e.get("added", 0)), "last_checked": SyncMerge.num(e.get("last_checked", 0)), "modified": SyncMerge.num(e.get("modified", 0)),
 	})
 
 
 func _update_book(local: Dictionary, e: Dictionary, entries: Array) -> void:
-	var remote_newer := float(e.modified) > float(local.modified)
-	var stamp := maxf(float(e.modified), float(local.modified))
-	var rss_only: bool = local.get("rss_only", false)
+	var remote_newer := SyncMerge.num(e.get("modified", 0)) > SyncMerge.num(local.get("modified", 0))
 	var list_changed := false
-	if _has_urls(local.chapters):
-		var base: Array = _clean_chapters(e.get("chapters", [])) if remote_newer else local.chapters
-		var others: Array = [{"chapters": local.chapters}] + entries if remote_newer else entries
-		var merged := _combined_chapters(base, others)
-		if _chapter_ids(merged) != _chapter_ids(local.chapters):
+	var merged := SyncMerge.updated_chapters(local.chapters, e, entries, remote_newer, Library.chapter_key)
+	if SyncMerge.has_urls(local.chapters):
+		if SyncMerge.chapter_ids(merged, Library.chapter_key) != _chapter_ids(local.chapters):
 			Library.replace_chapters(local.id, merged)
-	else:
-		var longer := _extended_chapters(local.chapters, entries)
-		if longer.size() > local.chapters.size():
-			for i in local.chapters.size():  # same chapters at the start: keep their word counts
-				if local.chapters[i].has("words"):
-					longer[i].words = local.chapters[i].words
-			local.chapters = longer
-			list_changed = true
-	var fields := {"modified": stamp}
-	if remote_newer:
-		for f in ["title", "author", "synopsis", "tags", "extra", "cover_url", "rss_only", "url", "source", "kind", "total_words", "dropped", "archived", "favorite"]:
-			if e.has(f):
-				fields[f] = e[f]
-	else:
-		fields.rss_only = rss_only  # replace_chapters clears it
-	fields.last_checked = maxf(float(local.get("last_checked", 0)), float(e.get("last_checked", 0)))
+	elif merged.size() > local.chapters.size():
+		for i in local.chapters.size():  # same chapters at the start: keep their word counts
+			if local.chapters[i].has("words"):
+				merged[i].words = local.chapters[i].words
+		local.chapters = merged
+		list_changed = true
+	var fields := SyncMerge.detail_fields(local, e)
 	if list_changed or fields.keys().any(func(f): return local.get(f) != fields[f]):
 		Library.update_book(local.id, fields)
 
 
-## Imported books have no chapter URLs, and chapters are only ever added to their
-## end (a later part of a serial, see Library.append_chapters): the longest of the
-## other devices' lists that starts with this one, else this one.
+## SyncMerge's rule with this app's chapter keys.
 static func _extended_chapters(chapters: Array, entries: Array) -> Array:
-	var best := chapters
-	for e in entries:
-		var list: Array = _clean_chapters(e.get("chapters", []))
-		if list.size() <= best.size() or (_has_urls(list) and not chapters.is_empty()):
-			continue
-		var prefix := true
-		for i in chapters.size():
-			if list[i].title != chapters[i].title:
-				prefix = false
-				break
-		if prefix:
-			best = list
-	return best
+	return SyncMerge.extended_chapters(chapters, entries)
 
 
-## The base list in its order, plus chapters only the other lists have, each placed
-## right after the chapter it follows there (or at the end).
-static func _combined_chapters(base: Array, entries: Array) -> Array:
-	var out := base.duplicate()
-	if not _has_urls(out) and not out.is_empty():
-		return out
-	var pos := {}
-	for i in out.size():
-		pos[_chapter_id_of(out[i], i)] = i
-	for e in entries:
-		var prev := ""
-		var list: Array = _clean_chapters(e.get("chapters", []))
-		for i in list.size():
-			var id := _chapter_id_of(list[i], i)
-			if not pos.has(id):
-				var at: int = pos[prev] + 1 if pos.has(prev) else out.size()
-				out.insert(at, list[i])
-				pos.clear()
-				for j in out.size():
-					pos[_chapter_id_of(out[j], j)] = j
-			prev = id
-	return out
-
-
-static func _clean_chapters(list: Array) -> Array:
-	var out := []
-	for c in list:
-		if c is Dictionary:
-			out.append({"title": str(c.get("title", "")), "url": str(c.get("url", "")), "date": c.get("date", 0)})
-	return out
-
-
-static func _has_urls(chapters: Array) -> bool:
-	return chapters.any(func(c): return c.get("url", "") != "")
-
-
-static func _chapter_ids(chapters: Array) -> Array:
-	var out := []
-	for i in chapters.size():
-		out.append(_chapter_id_of(chapters[i], i))
-	return out
-
-
-## Chapters with a URL are identified by it (indexes shift when a chapter list is
-## completed); imported books have no URLs and only get chapters added at the end,
-## so they use the index.
+## SyncMerge's rule with this app's chapter keys.
 static func _chapter_id_of(chapter: Dictionary, index: int) -> String:
-	var url: String = chapter.get("url", "")
-	return Library.chapter_key(url).md5_text().left(16) if url != "" else "n%d" % index
+	return SyncMerge.chapter_id_of(chapter, index, Library.chapter_key)
 
 
-static func _chapter_index_by_id(book: Dictionary, id: String) -> int:
-	if id == "":
-		return -1
-	for i in book.chapters.size():
-		if _chapter_id_of(book.chapters[i], i) == id:
-			return i
-	return -1
+## SyncMerge's rule with this app's chapter keys.
+static func _chapter_ids(chapters: Array) -> Array:
+	return SyncMerge.chapter_ids(chapters, Library.chapter_key)
 
 
-static func _activity(book: Dictionary) -> float:
-	return maxf(maxf(float(book.get("modified", 0)), float(book.get("last_read", 0))), float(book.get("added", 0)))
+## SyncMerge's rule with this app's chapter keys.
+static func _flagged_ids(e: Dictionary) -> Dictionary:
+	return SyncMerge.flagged_ids(e, Library.chapter_key)
 
 
 func _merge_rules(remote: Array) -> void:
-	var best := {}
-	var stamp := TextRules.modified
-	for d in remote:
-		var r: Variant = d.get("rules")
-		if r is Dictionary and r.get("list") is Array and float(r.get("modified", 0)) > stamp:
-			best = r
-			stamp = float(r.modified)
+	var best := SyncMerge.newest_rules(remote, TextRules.modified)
 	if best.is_empty():
 		return
 	var list := []
-	for r in best.list:
+	for r in best.get("list", []):
 		if r is Dictionary:
 			var c: Dictionary = r.duplicate()
-			var book: String = c.get("book", "")
+			var book := str(c.get("book", ""))
 			if book.begins_with("sync:"):
 				var local := Library.find_by_sync_key(book.trim_prefix("sync:"))
 				if not local.is_empty():
 					c.book = local.id
 			list.append(c)
-	TextRules.apply_synced(list, stamp)
+	TextRules.apply_synced(list, SyncMerge.num(best.get("modified", 0)))
 
 
 func _merge_settings(remote: Array) -> void:
-	var best := {}
-	for d in remote:
-		var s: Variant = d.get("settings")
-		if not (s is Dictionary):
-			continue
-		for k in s:
-			if s[k] is Dictionary and float(s[k].get("t", 0)) > float(Settings.stamps.get(k, 0)) \
-					and (not best.has(k) or float(s[k].t) > float(best[k].t)):
-				best[k] = s[k]
+	var best := SyncMerge.winning_settings(remote, Settings.stamps)
 	for k in best:
 		var v: Variant = best[k].get("v")
 		if typeof(v) == TYPE_FLOAT and typeof(Settings.DEFAULTS.get(k)) == TYPE_INT:
 			v = int(v)
-		Settings.apply_synced(k, v, float(best[k].t))
+		Settings.apply_synced(k, v, SyncMerge.num(best[k].get("t", 0)))
 
 
 ## This device's index.json (without `updated`); `books` from _index_entry.
@@ -956,18 +830,6 @@ func _missing_doc() -> Dictionary:
 	return out
 
 
-## A book's entry in index.json: what changes often, and the md5 of its book file.
-## `texts` is only for older versions, which look at a book's folder when it
-## changes (this one goes by on_server, see _chapters_differ).
-static func _index_entry(b: Dictionary, key: String, md5: String) -> Dictionary:
-	var p: Dictionary = b.progress
-	var at: int = p.chapter
-	return {
-		"key": key, "md5": md5, "modified": b.modified, "last_read": b.last_read, "texts": b.get("text_stamp", 0),
-		"progress": {"id": _chapter_id_of(b.chapters[at], at) if at < b.chapters.size() else "", "chapter": at, "paragraph": p.paragraph},
-	}
-
-
 ## A book's file in devices/<id>/books/: everything but what's in its index entry.
 ## `flags`: from _flags.
 func _book_file(b: Dictionary, flags: String) -> Dictionary:
@@ -975,7 +837,7 @@ func _book_file(b: Dictionary, flags: String) -> Dictionary:
 		"key": Library.sync_key(b), "title": b.title, "author": b.author, "kind": b.kind, "source": b.source,
 		"url": b.url, "cover_url": b.cover_url, "synopsis": b.synopsis, "tags": b.tags, "extra": b.get("extra", {}),
 		"rss_only": b.get("rss_only", false), "added": b.added, "last_checked": b.last_checked,
-		"chapters": _clean_chapters(b.chapters),
+		"chapters": SyncMerge.clean_chapters(b.chapters),
 		"cover": _cover_names.get(b.id, ""), "cover_set": b.get("cover_set", 0), "on_server": flags,
 		"bookmarks": b.get("bookmarks", []).map(func(m):
 			var c: int = m.chapter
@@ -990,14 +852,6 @@ func _book_file(b: Dictionary, flags: String) -> Dictionary:
 	if b.has("favorite"):
 		out.favorite = bool(b.favorite)
 	return out
-
-
-## Sums up what decides whether a book's cover needs syncing: its cover here,
-## the cover wanted, and whether its server folder exists. When it's the same as
-## after the last check, and no chapter is missing on either side, nothing has to
-## be listed or sent for the book.
-static func _cover_sig(b: Dictionary, on_server: bool, wanted: Dictionary) -> String:
-	return "%s|%s|%s|%s|%s" % [b.cover, b.get("cover_set", 0), wanted.get("name", ""), wanted.get("set", 0), on_server]
 
 
 ## True when this device has a chapter of the book with its full text that it
@@ -1095,46 +949,26 @@ func _remote_flags(remote: Array) -> Dictionary:
 	return out
 
 
-## The ids of the chapters set in a book file's on_server.
-static func _flagged_ids(e: Dictionary) -> Dictionary:
-	var bits := Marshalls.base64_to_raw(e.on_server)
-	var list: Variant = e.get("chapters", [])
-	var out := {}
-	if not list is Array:
-		return out
-	for i in mini(list.size(), bits.size() * 8):
-		if bits[i >> 3] & (1 << (i & 7)) and list[i] is Dictionary:
-			out[_chapter_id_of(list[i], i)] = true
-	return out
-
-
 # --- plugins -----------------------------------------------------------------
 
 ## Install, update or remove plugins as other devices did, then upload the
 ## plugins this device has that the server doesn't have yet.
 func _sync_plugins(dav: WebDav, remote: Array) -> String:
-	var newest := {}  # id -> the most recent record of any other device
-	for d in remote:
-		var pl: Variant = d.get("plugins")
-		if not (pl is Dictionary):
-			continue
-		for id in pl:
-			if pl[id] is Dictionary and (not newest.has(id) or float(pl[id].get("t", 0)) > float(newest[id].get("t", 0))):
-				newest[id] = pl[id]
+	var newest := SyncMerge.newest_plugin_records(remote)  # id -> the most recent record of any other device
 	var mine := Plugins.sync_records()
 	for id in newest:
 		var r: Dictionary = newest[id]
 		var m: Dictionary = mine.get(id, {})
-		if float(r.get("t", 0)) <= float(m.get("t", 0)):
+		if SyncMerge.num(r.get("t", 0)) <= SyncMerge.num(m.get("t", 0)):
 			continue
 		if r.get("removed", false):
 			if Plugins.is_installed(id):
-				Plugins.remove(id, float(r.t))
+				Plugins.remove(id, SyncMerge.num(r.get("t", 0)))
 			continue
 		if not Plugins.get_entry(id).is_empty() and not m.get("removed", false) and Plugins.compare_versions(str(r.get("v", "")), str(m.get("v", ""))) <= 0:
 			continue  # already have this version (or a newer one)
 		_set_progress("Installing plugin %s…" % id)
-		await _download_plugin(dav, id, str(r.get("v", "")), float(r.get("t", 0)))
+		await _download_plugin(dav, id, str(r.get("v", "")), SyncMerge.num(r.get("t", 0)))
 
 	var listing := await dav.list(FOLDER + "plugins/")
 	if not listing.ok:
@@ -1151,7 +985,12 @@ func _sync_plugins(dav: WebDav, remote: Array) -> String:
 		if _listed(listing, id):
 			var versions := await dav.list(FOLDER + "plugins/%s/" % id)
 			if versions.ok and _listed(versions, str(r.v)):
-				continue
+				# The manifest goes up last and marks the version complete, so
+				# only it says the upload finished (a folder alone may hold an
+				# interrupted upload, which downloaders skip as incomplete).
+				var uploaded := await dav.list(folder)
+				if uploaded.ok and SyncMerge.version_complete(uploaded.entries, Plugins.MANIFEST):
+					continue
 		_set_progress("Uploading plugin %s…" % id)
 		var made := {}
 		for rel in files:

@@ -6,12 +6,13 @@ const RATES := [0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
 
 var book := {}
 var chapter := 0
+var tts: ReaderTts               # reading-aloud control; the page keeps the view
 var _items: Array = []           # [{kind, bb, tts}] one per RichTextLabel paragraph
 var _data := {}                  # raw chapter data, kept so rules can be re-applied
 var _load_token := 0
-var _highlight := -1
-var _highlight_sentence := -1    # sentence of _highlight being read in sentence mode, or -1
-var _follow_token := 0           # bumps so only the latest _follow_sentence() scrolls
+var _loading := false            # a chapter load is in flight
+var _bb_cache := PackedStringArray()  # finished BBCode per item, reused between highlight changes
+var _big := {}                   # item indexes rendered title-size (first title/heading)
 var _listen_shown := false       # whether the header's Listen button currently shows "Stop"
 var _excerpt := false
 var _restoring := false
@@ -44,15 +45,8 @@ var _press_at := Vector2.ZERO
 var _sleep_btn: Button
 var _epub_dialog: FileDialog
 var _cover_dialog: FileDialog
-var _advance_token := 0
-var _upcoming_token := 0
 var _search_view: SearchView
 var _find := {}                  # search match marked on the Read tab: {paragraph, from, to}
-
-## Chapters handed to the speech service ahead of time on Android, so reading carries on
-## while the app is in the background (where the reader can't load the next chapter).
-## A few, for listening where there's no signal; more would download chapters nobody hears.
-const CHAPTERS_AHEAD := 3
 
 const SEARCH_TAB := 2
 const DETAILS_TAB := 3
@@ -89,13 +83,9 @@ func _ready() -> void:
 	add_child(_save_timer)
 
 	Settings.changed.connect(_on_setting)
-	Speech.paragraph_started.connect(_on_tts_paragraph)
-	Speech.sentence_started.connect(_on_tts_sentence)
-	Speech.state_changed.connect(_on_tts_state)
-	Speech.reached_end.connect(_on_tts_end)
-	Speech.chapter_changed.connect(_on_tts_chapter)
+	tts = ReaderTts.new(self)
+	tts.connect_signals()
 	Speech.sleep_changed.connect(_update_player)
-	Speech.sleep_triggered.connect(func(): _set_highlight(-1); main.toast("Sleep timer: stopped reading.", "info"))
 	TextRules.changed.connect(_on_rules_changed)
 	Library.chapter_saved.connect(func(id, index):
 		if not book.is_empty() and id == book.id and index == chapter and _excerpt and not Speech.playing:
@@ -174,9 +164,7 @@ func on_hidden() -> void:
 
 ## Scroll to the paragraph being read aloud (used when jumping back from the sidebar).
 func reveal_speech() -> void:
-	if Speech.playing and Speech.source_owner == "reader" and Speech.items.size() == _items.size():
-		_set_highlight(Speech.current, Speech.current_sentence())
-		_scroll_to(Speech.current, false)
+	tts.reveal()
 
 
 # --- loading -----------------------------------------------------------------
@@ -187,6 +175,7 @@ func open_book(id: String, ch := -1) -> void:
 	book = Library.get_book(id)
 	if book.is_empty():
 		return
+	tts.bump_advance()
 	Library.set_dropped(id, false)  # opening a dropped book picks it up again
 	chapter = clampi(ch if ch >= 0 else book.progress.chapter, 0, max(0, book.chapters.size() - 1))
 	var para: int = book.progress.paragraph if ch < 0 else 0
@@ -197,6 +186,7 @@ func open_book(id: String, ch := -1) -> void:
 func go_to_chapter(index: int, start_tts := false) -> void:
 	if index < 0 or index >= book.chapters.size():
 		return
+	tts.bump_advance()
 	var was_playing := Speech.playing
 	Speech.stop()
 	chapter = index
@@ -210,8 +200,8 @@ func go_to_chapter(index: int, start_tts := false) -> void:
 func _load_chapter(paragraph: int) -> void:
 	_load_token += 1
 	var token := _load_token
-	_highlight = -1
-	_highlight_sentence = -1
+	_loading = true
+	tts.clear_silent()
 	_find = {}
 	_items.clear()  # so nothing re-renders the previous chapter while this one loads or fails
 	_data = {}
@@ -224,9 +214,11 @@ func _load_chapter(paragraph: int) -> void:
 	if data.is_empty() or data.get("excerpt", false):
 		data = await Sources.load_chapter(book, chapter)
 	if token != _load_token:
+		_loading = false
 		return
 	if data.has("error") and not data.has("paragraphs"):
 		_set_status(data.error, true)
+		_loading = false
 		return
 	_set_status("")
 	_excerpt = data.get("excerpt", false)
@@ -239,6 +231,7 @@ func _load_chapter(paragraph: int) -> void:
 	_scroll_to(paragraph, false)
 	_restoring = false
 	Library.set_progress(book.id, chapter, paragraph)
+	_loading = false
 	_update_footer()
 	_prefetch(chapter + 1)
 
@@ -290,38 +283,78 @@ func _on_rules_changed() -> void:
 		start_tts(mini(resume, _items.size() - 1))
 
 
-func _render() -> void:
-	var colors := Settings.reader_colors()
+## Everything a finished paragraph depends on besides the items and the highlight.
+func _render_ctx() -> Dictionary:
 	var size := int(Settings.get_value("font_size"))
-	var hl: String = colors.highlight.to_html()
-	var parts := PackedStringArray()
-	var first_heading := true
+	var colors := Settings.reader_colors()
 	var marked := {}
 	for m in Library.bookmarks(book):
 		if m.chapter == chapter:
 			marked[m.paragraph] = true
-	var marker := _marker_bbcode(size) if not marked.is_empty() else ""
-	var indent := indent_bbcode(size) if Settings.get_value("first_line_indent") else ""
+	return {
+		"colors": colors, "size": size, "hl": colors.highlight.to_html(),
+		"marked": marked, "marker": _marker_bbcode(size) if not marked.is_empty() else "",
+		"indent": indent_bbcode(size) if Settings.get_value("first_line_indent") else "",
+	}
+
+
+## The finished BBCode of item `i`: highlight, search mark, indent, bookmark icon,
+## title sizing. Pure in the items, the context and the highlight state.
+func _item_bbcode(i: int, ctx: Dictionary) -> String:
+	var it: Dictionary = _items[i]
+	var bb: String = it.bb
+	if i == tts.highlight:
+		bb = _highlighted(it, String(ctx.hl), ctx.colors)
+	elif i == _find.get("paragraph", -1):
+		bb = _mark_span(bb, _find.from, _find.to, "[bgcolor=%s]" % Color(UiTheme.WARN, 0.4).to_html(), "[/bgcolor]")
+	var indent: String = ctx.indent
+	if indent != "" and _indented(it):
+		bb = indent + bb
+	if (ctx.marked as Dictionary).has(i):
+		bb = String(ctx.marker) + bb
+	if _big.has(i):
+		bb = "[center][font_size=%d][b]%s[/b][/font_size][/center]" % [int(int(ctx.size) * 1.45), bb]
+	elif it.kind == "heading":
+		bb = "[font_size=%d][b]%s[/b][/font_size]" % [int(int(ctx.size) * 1.15), bb]
+	return bb
+
+
+func _render() -> void:
+	var ctx := _render_ctx()
+	_bb_cache = PackedStringArray()
+	_big = {}
+	var first_heading := true
 	for i in _items.size():
 		var it: Dictionary = _items[i]
-		var bb: String = it.bb
-		if i == _highlight:
-			bb = _highlighted(it, hl, colors)
-		elif i == _find.get("paragraph", -1):
-			bb = _mark_span(bb, _find.from, _find.to, "[bgcolor=%s]" % Color(UiTheme.WARN, 0.4).to_html(), "[/bgcolor]")
-		if indent != "" and _indented(it):
-			bb = indent + bb
-		if marked.has(i):
-			bb = marker + bb
 		if it.kind == "title" or (it.kind == "heading" and first_heading):
-			bb = "[center][font_size=%d][b]%s[/b][/font_size][/center]" % [int(size * 1.45), bb]
+			_big[i] = true
 			first_heading = false
-		elif it.kind == "heading":
-			bb = "[font_size=%d][b]%s[/b][/font_size]" % [int(size * 1.15), bb]
-		parts.append(bb)
+		_bb_cache.append(_item_bbcode(i, ctx))
+	_assign_text()
+
+
+func _assign_text() -> void:
 	var v := _text.get_v_scroll_bar().value
-	_text.text = "\n".join(parts)
+	_text.text = "\n".join(_bb_cache)
 	_text.get_v_scroll_bar().value = v
+
+
+## Rebuilds only the old and new highlighted paragraphs after a highlight change;
+## the rest of the cached chapter text is reused as-is. The scroll position is kept.
+func refresh_highlight(old: int, new: int) -> void:
+	if _bb_cache.size() != _items.size():
+		_render()
+		return
+	var ctx := _render_ctx()
+	var changed := false
+	for i in [old, new]:
+		if i >= 0 and i < _items.size():
+			var bb := _item_bbcode(i, ctx)
+			if bb != _bb_cache[i]:
+				_bb_cache[i] = bb
+				changed = true
+	if changed:  # e.g. with highlighting switched off, nothing differs
+		_assign_text()
 
 
 ## An inline bookmark icon for the start of bookmarked paragraphs. [img] only takes
@@ -364,7 +397,7 @@ func _highlighted(it: Dictionary, hl: String, colors: Dictionary) -> String:
 		"underline": tags = ["[u]", "[/u]"]
 		"color": tags = ["[color=%s]" % UiTheme.ACCENT.darkened(0.15 if colors.bg.get_luminance() > 0.5 else 0.0).to_html(), "[/color]"]
 		_: return it.bb
-	var span := _sentence_span(it, _highlight_sentence)
+	var span := _sentence_span(it, tts.highlight_sentence)
 	if span.x < 0:
 		return tags[0] + it.bb + tags[1]
 	return _mark_span(it.bb, span.x, span.y, tags[0], tags[1])
@@ -485,116 +518,15 @@ func _set_status(message: String, is_error := false) -> void:
 		_status.add_child(row)
 
 
-# --- TTS ---------------------------------------------------------------------
+# --- TTS (control lives in ReaderTts; the page keeps the view) --------------------
 
 func toggle_tts() -> void:
-	if Speech.playing:
-		Speech.stop()
-		_set_highlight(-1)
-	else:
-		start_tts()
+	tts.toggle()
 
 
+## Reads the current chapter aloud, waiting first while it is still loading.
 func start_tts(from := -1) -> void:
-	if not Speech.is_supported():
-		main.toast("Text-to-speech isn't available on this device.", "warn")
-		return
-	if _items.is_empty():
-		await get_tree().create_timer(0.3).timeout
-		if _items.is_empty():
-			return
-	var start := from if from >= 0 else _first_visible()
-	Speech.play(_speech_items(_items), start, "reader", book.title, book.chapters[chapter].title)
-	header_changed.emit()
-	_queue_upcoming()
-
-
-## Hands the next chapters to the speech service (Android), loading them first if needed.
-func _queue_upcoming() -> void:
-	if not Speech.reads_ahead() or not Settings.get_value("tts_auto_advance"):
-		return
-	_upcoming_token += 1
-	var token := _upcoming_token
-	var id: String = book.id
-	while Speech.playing and Speech.source_owner == "reader" and Speech.chapters_ahead() < CHAPTERS_AHEAD:
-		var index := chapter + Speech.chapters_ahead() + 1
-		if index >= book.chapters.size():
-			return
-		var data: Dictionary = Library.load_chapter(id, index)
-		if data.is_empty() or data.get("excerpt", false):
-			data = await Sources.load_chapter(book, index, true)
-			if token != _upcoming_token or book.get("id", "") != id:
-				return
-		if data.has("error") and not data.has("paragraphs"):
-			return  # the reader will try again when it gets there
-		Speech.append_chapter(_speech_items(_make_items(data, index)), book.chapters[index].title)
-
-
-## The speech service moved on to a chapter that _queue_upcoming() handed over.
-func _on_tts_chapter(delta: int) -> void:
-	if book.is_empty() or Speech.source_owner != "reader":
-		return
-	chapter = clampi(chapter + delta, 0, book.chapters.size() - 1)
-	await _load_chapter(maxi(Speech.current, 0))
-	reveal_speech()
-	_queue_upcoming()
-
-
-func _on_tts_paragraph(index: int) -> void:
-	if not is_inside_tree() or Speech.source_owner != "reader" or Speech.items.size() != _items.size():
-		return
-	_set_highlight(index, Speech.current_sentence())
-	if Settings.get_value("tts_follow"):
-		if Settings.get_value("tts_mode") == "sentence":
-			_follow_sentence()
-		else:
-			_scroll_to(index, true)
-	_update_player()
-
-
-func _on_tts_end() -> void:
-	if book.is_empty() or Speech.source_owner != "reader" or Speech.items.size() != _items.size():
-		return  # speech that the reader didn't start
-	_set_highlight(-1)
-	if Speech.stops_at_chapter_end():
-		Speech.set_sleep(0)
-		main.toast("Sleep timer: stopped at the end of the chapter.")
-		header_changed.emit()
-		return
-	if Settings.get_value("tts_auto_advance") and chapter < book.chapters.size() - 1:
-		_advance_token += 1
-		var token := _advance_token
-		await get_tree().create_timer(int(Settings.get_value("tts_pause_chapter")) / 1000.0).timeout
-		if token == _advance_token and visible:
-			go_to_chapter(chapter + 1, true)
-	else:
-		header_changed.emit()
-
-
-func _on_tts_sentence(index: int, sentence: int) -> void:
-	if not is_inside_tree() or Speech.source_owner != "reader" or Speech.items.size() != _items.size():
-		return
-	if index == _highlight:
-		_set_highlight(index, sentence)
-		if Settings.get_value("tts_follow"):
-			_follow_sentence()
-
-
-## Keeps the header's Listen / Stop button in step with playback, however it started or stopped.
-func _on_tts_state(_playing: bool) -> void:
-	_update_player()
-	if Speech.playing != _listen_shown and main.current == self:
-		header_changed.emit()
-
-
-func _set_highlight(i: int, sentence := -1) -> void:
-	if Settings.get_value("tts_mode") != "sentence":
-		sentence = -1
-	if _highlight == i and _highlight_sentence == sentence:
-		return
-	_highlight = i
-	_highlight_sentence = sentence
-	_render()
+	tts.start(from)
 
 
 # --- scrolling / progress ----------------------------------------------------
@@ -617,53 +549,6 @@ func _scroll_to(paragraph: int, smooth: bool) -> void:
 		create_tween().tween_property(bar, "value", y, 0.35).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	else:
 		bar.value = y
-
-
-## Sentence mode: scroll only once part of the sentence being read is off screen, and
-## then put it near the top, so scrolls are as rare as possible. When the sentence
-## can't be located, the whole paragraph counts. Waits a frame, for the label to lay
-## out the re-rendered text.
-func _follow_sentence() -> void:
-	_follow_token += 1
-	var token := _follow_token
-	await get_tree().process_frame
-	if token != _follow_token or _highlight < 0 or _highlight >= _items.size():
-		return
-	var it: Dictionary = _items[_highlight]
-	var span := _sentence_span(it, _highlight_sentence)
-	if span.x < 0:
-		span = Vector2i(0, _visible_text(it.bb).length())
-	var start := _paragraph_char(_highlight)
-	if start < 0:
-		return
-	if Library.bookmarks(book).any(func(m): return m.chapter == chapter and m.paragraph == _highlight):
-		start += 2  # the bookmark icon and the space after it
-	if Settings.get_value("first_line_indent") and _indented(it):
-		start += 1  # the indent image
-	var first := _text.get_character_line(start + span.x)
-	var last := _text.get_character_line(start + maxi(span.x, span.y - 1))
-	if first < 0 or last < 0:
-		return
-	var top := _text.get_line_offset(first)
-	var bottom := _text.get_line_offset(last) + _text.get_line_height(last)
-	var bar := _text.get_v_scroll_bar()
-	if top >= bar.value and bottom <= bar.value + _text.size.y:
-		return
-	var y := clampf(top - int(Settings.get_value("font_size")), 0, bar.max_value)
-	create_tween().tween_property(bar, "value", y, 0.35).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-
-
-## Index in the label's characters of the first one of paragraph `paragraph`, or -1.
-func _paragraph_char(paragraph: int) -> int:
-	var lo := 0
-	var hi := _text.get_total_character_count()
-	while lo < hi:
-		var mid := (lo + hi) / 2
-		if _text.get_character_paragraph(mid) < paragraph:
-			lo = mid + 1
-		else:
-			hi = mid
-	return lo if _text.get_character_paragraph(lo) == paragraph else -1
 
 
 func _first_visible() -> int:
@@ -786,7 +671,7 @@ func _build_read_view() -> void:
 	var tts_settings := UI.icon_button("settings", "Voice settings", _show_tts_popup)
 	tts_settings.name = "TtsSettingsButton"
 	prow.add_child(tts_settings)
-	prow.add_child(UI.icon_button("x", "Stop", func(): Speech.stop(); _set_highlight(-1)))
+	prow.add_child(UI.icon_button("x", "Stop", func(): Speech.stop(); tts.clear_highlight()))
 	_player.add_child(prow)
 	_player.hide()
 	var dock := UI.vbox(0, [UI.spacer(false), _player])

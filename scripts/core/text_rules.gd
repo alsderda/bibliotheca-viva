@@ -236,9 +236,7 @@ func _commit() -> void:
 func _write(stamp: float) -> void:
 	modified = stamp
 	_compiled.clear()
-	var f := FileAccess.open(_path(), FileAccess.WRITE)
-	if f:
-		f.store_string(JSON.stringify({"version": 1, "modified": modified, "rules": rules}, "\t"))
+	SafeFile.write_text(_path(), JSON.stringify({"version": 1, "modified": modified, "rules": rules}, "\t"))
 	changed.emit()
 
 

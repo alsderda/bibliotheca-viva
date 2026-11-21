@@ -1,0 +1,106 @@
+extends RefCounted
+## Self-test checks for this area. `t` is the self-test node: call t.check(name, got, want).
+
+func run(t: Node) -> void:
+	await t.get_tree().process_frame
+	var key_of := func(url: String) -> String: return url
+	_decisions(t, key_of)
+	_validation(t)
+	_plugin_complete(t)
+
+
+## Merge decisions on hand-made data, without a server.
+func _decisions(t: Node, key_of: Callable) -> void:
+	var a := {"key": "k", "modified": 10.0, "last_read": 5.0}
+	var b := {"key": "k", "modified": 20.0, "last_read": 7.0}
+	t.check("newer modified wins", SyncMerge.newest_by([a, b], "modified"), b)
+	t.check("newer last_read wins", SyncMerge.newest_by([a, b], "last_read"), b)
+	var tied := a.duplicate()
+	tied.last_read = 99.0
+	t.check("a tie keeps the first", SyncMerge.newest_by([a, tied], "modified"), a)
+	t.check("nothing newer is empty", SyncMerge.newest_by([], "modified"), {})
+	t.check("tombstone newer than activity removes", SyncMerge.tombstone_removes(10.0, 7.0), true)
+	t.check("tombstone at activity removes", SyncMerge.tombstone_removes(7.0, 7.0), true)
+	t.check("older tombstone keeps", SyncMerge.tombstone_removes(5.0, 7.0), false)
+	t.check("activity reads the newest stamp", SyncMerge.activity_of({"modified": 3.0, "last_read": 9.0, "added": 1.0}), 9.0)
+	var grouped := SyncMerge.group_by_key([{"books": [a, b]}, {"books": [a]}])
+	t.check("grouping picks winners", [grouped.k.meta, grouped.k.pos], [b, b])
+	t.check("grouping keeps every entry", grouped.k.all.size(), 3)
+	var novel := {"key": "n", "modified": 1.0, "cover": "old.png", "cover_set": 0.0}
+	var picked := {"key": "n", "modified": 2.0, "cover": "new.png", "cover_set": 9.0}
+	t.check("a cover picked by hand wins", SyncMerge.pick_cover([novel, picked]), {"name": "new.png", "set": 9.0})
+	t.check("else the newest cover wins", SyncMerge.pick_cover([novel, {"key": "n", "modified": 3.0, "cover": "late.png"}]), {"name": "late.png", "set": 0.0})
+
+	var local := {"last_read": 4.0, "progress": {"chapter": 0, "paragraph": 1},
+		"chapters": [{"title": "A", "url": "u1"}, {"title": "B", "url": ""}],
+		"bookmarks": [{"id": "m1", "chapter": 0, "chapter_id": "x", "paragraph": 1, "name": "One",
+			"text": "", "created": 1.0, "modified": 2.0, "deleted": false}]}
+	var entry := {"last_read": 8.0, "progress": {"id": "???", "chapter": 99, "paragraph": 40}}
+	var moving := SyncMerge.newer_progress(local, entry, key_of)
+	t.check("newer position moves", [moving.progress.chapter, moving.last_read], [1, 8.0])
+	t.check("older position stays", SyncMerge.newer_progress(local, {"last_read": 2.0}, key_of), {})
+	var remote := [{"bookmarks": [
+		{"id": "m1", "chapter": 4, "chapter_id": "zzz", "paragraph": 2, "name": "Renamed",
+			"text": "", "created": 1.0, "modified": 5.0, "deleted": false},
+		{"id": "m2", "chapter": 0, "chapter_id": "u1", "paragraph": 0, "name": "New",
+			"text": "", "created": 2.0, "modified": 3.0, "deleted": false}]}]
+	var marks := SyncMerge.merged_bookmarks(local, remote, key_of)
+	t.check("bookmarks merge", marks.size(), 2)
+	var first: Dictionary = marks.filter(func(m): return m.id == "m1")[0]
+	t.check("newer rename wins", [first.name, first.paragraph], ["Renamed", 2])
+	t.check("unknown chapter id falls back to the chapter", marks.filter(func(m): return m.id == "m2")[0].chapter, 0)
+	t.check("older change loses", SyncMerge.merged_bookmarks(local, [{"bookmarks": [
+		{"id": "m1", "paragraph": 9, "modified": 1.0}]}], key_of), local.bookmarks)
+
+	var mine := [{"title": "a", "url": ""}, {"title": "b", "url": ""}]
+	t.check("longer imported list wins", SyncMerge.extended_chapters(mine, [{"chapters": mine + [{"title": "c", "url": ""}]}]).size(), 3)
+	t.check("different imported list loses", SyncMerge.extended_chapters(mine, [{"chapters": [{"title": "x"}, {"title": "b"}, {"title": "c"}]}]).size(), 2)
+	var web := [{"title": "A", "url": "u1"}]
+	var merged := SyncMerge.combined_chapters(web, [{"chapters": [{"title": "A", "url": "u1"}, {"title": "B", "url": "u2"}]}], key_of)
+	t.check("web lists combine", merged.map(func(c): return c.title), ["A", "B"])
+	t.check("detail fields take the newest", SyncMerge.detail_fields({"modified": 1.0, "title": "Old", "last_checked": 1.0},
+		{"modified": 2.0, "title": "New", "last_checked": 0.0}), {"modified": 2.0, "title": "New", "last_checked": 1.0})
+
+	var docs := [{"settings": {"v": {"v": 1, "t": 5.0}}}, {"settings": {"v": {"v": 2, "t": 9.0}, "w": {"v": 1, "t": 3.0}}}]
+	t.check("newest setting wins", SyncMerge.winning_settings(docs, {}), {"v": {"v": 2, "t": 9.0}, "w": {"v": 1, "t": 3.0}})
+	t.check("older setting loses", SyncMerge.winning_settings(docs, {"v": 10.0}), {"w": {"v": 1, "t": 3.0}})
+	var with_rules := [{"rules": {"modified": 4.0, "list": [{"name": "old"}]}}, {"rules": {"modified": 6.0, "list": [{"name": "new"}]}}]
+	t.check("newest rules win", SyncMerge.newest_rules(with_rules, 0.0), {"modified": 6.0, "list": [{"name": "new"}]})
+	t.check("older rules lose", SyncMerge.newest_rules(with_rules, 9.0), {})
+	var with_plugins := [{"plugins": {"p": {"v": "1.0", "t": 2.0}}}, {"plugins": {"p": {"v": "1.1", "t": 7.0}}}]
+	t.check("newest plugin record wins", SyncMerge.newest_plugin_records(with_plugins), {"p": {"v": "1.1", "t": 7.0}})
+
+
+## Malformed device docs are cut down without errors.
+func _validation(t: Node) -> void:
+	t.check("no doc is unusable", SyncMerge.sanitize_device_doc("junk").doc.is_empty(), true)
+	t.check("books must be a list", SyncMerge.sanitize_device_doc({"books": {}}).doc.is_empty(), true)
+	var good := {"key": "k", "md5": "m", "modified": 1.0, "last_read": 2.0}
+	var doc := {"books": [good, {"md5": "m", "modified": 1.0, "last_read": 1.0}, "junk",
+		{"key": 7, "md5": "m", "modified": 1.0, "last_read": 1.0},
+		{"key": "x", "md5": "m", "modified": "soon", "last_read": 1.0},
+		{"key": "x", "md5": "m", "modified": 1.0},
+		{"key": "x", "modified": 1.0, "last_read": 1.0}],
+		"tombstones": {"gone": 5.0, "bad": "soon", "worse": []},
+		"rules": {"modified": "soon", "list": []},
+		"settings": {"keep": {"v": 1, "t": 2.0}, "bad": {"v": 1}, "worse": 7},
+		"plugins": {"keep": {"v": "1.0", "t": 1.0}, "bad": {"v": "1.0"}},
+		"missing": {"keep": ["a"], "bad": "a"},
+		"device": "junk"}
+	var checked := SyncMerge.sanitize_device_doc(doc)
+	t.check("only well-formed entries stay", checked.doc.books, [good])
+	t.check("tombstones keep numbers", checked.doc.tombstones, {"gone": 5.0})
+	t.check("bad rules go", checked.doc.rules, {})
+	t.check("bad settings go", checked.doc.settings, {"keep": {"v": 1, "t": 2.0}})
+	t.check("bad plugin records go", checked.doc.plugins, {"keep": {"v": "1.0", "t": 1.0}})
+	t.check("bad missing goes", checked.doc.missing, {"keep": ["a"]})
+	t.check("dropped entries are counted", checked.dropped, 13)
+
+
+## A version counts as uploaded only when the manifest is listed in its folder.
+func _plugin_complete(t: Node) -> void:
+	t.check("manifest listed is complete", SyncMerge.version_complete([{"name": "plugin.json", "is_dir": false}, {"name": "source.gd", "is_dir": false}], "plugin.json"), true)
+	t.check("folder alone is not complete", SyncMerge.version_complete([{"name": "source.gd", "is_dir": false}], "plugin.json"), false)
+	t.check("nothing listed is not complete", SyncMerge.version_complete([], "plugin.json"), false)
+	t.check("a folder named like the manifest is not complete",
+		SyncMerge.version_complete([{"name": "plugin.json", "is_dir": true}], "plugin.json"), false)
