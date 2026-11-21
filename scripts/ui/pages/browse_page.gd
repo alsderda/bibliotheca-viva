@@ -11,6 +11,8 @@ var _search_status: VBoxContainer
 var _url_edit: LineEdit
 var _url_status: Label
 var _url_web_btn: Button
+var _url_open_btn: Button
+var _url_book_id := ""
 var _sources_box: VBoxContainer
 var _how_box: VBoxContainer
 var _busy := false
@@ -252,6 +254,10 @@ func _build_url() -> Control:
 	_url_web_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	_url_web_btn.hide()
 	inner.add_child(_url_web_btn)
+	_url_open_btn = UI.button("Open book", "book", "PrimaryButton", func(): main.open_reader(_url_book_id))
+	_url_open_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_url_open_btn.hide()
+	inner.add_child(_url_open_btn)
 	card.add_child(inner)
 	col.add_child(card)
 
@@ -289,6 +295,7 @@ func _add_url() -> void:
 	_url_status.text = "Fetching novel info…"
 	_url_status.add_theme_color_override("font_color", UiTheme.MUTED)
 	_url_web_btn.hide()
+	_url_open_btn.hide()
 	if Plugins.listing_plugin(url) != null:  # a search: save it instead
 		var saved := SavedSearches.add(url)
 		_url_status.text = saved.get("error", "Saved the search “%s”. It's in Updates → Saved searches." % saved.get("name", ""))
@@ -310,6 +317,8 @@ func _add_url() -> void:
 	_url_status.text = "Added “%s” with %d chapters%s." % [book.title, book.chapters.size(), " (RSS preview mode)" if book.get("rss_only") else ""]
 	_url_status.add_theme_color_override("font_color", UiTheme.GOOD)
 	_url_edit.text = ""
+	_url_book_id = book.id
+	_url_open_btn.show()
 
 
 # --- sources -----------------------------------------------------------------
