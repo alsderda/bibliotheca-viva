@@ -422,31 +422,97 @@ static func chapter_key(url: String) -> String:
 
 
 ## Replace a book's chapter list, moving cached chapter files to their new positions.
+## Crash-safe: kept files move through a staging/ subfolder (whose <n>.json files
+## no reader sees: has_chapter/load_chapter only read the book folder's own
+## <n>.json) under a plan.json manifest written once everything is staged. A kill
+## before the manifest leaves staged files the next replace_chapters or load moves
+## back; a kill after leaves a plan it finishes. Only <int>.json files are touched.
 func replace_chapters(id: String, new_chapters: Array) -> void:
 	var b := get_book(id)
 	if b.is_empty():
 		return
+	_recover_replace(id)
+	b = get_book(id)
+	if b.is_empty():
+		return
 	var dir := book_dir(id)
-	var moves := []
-	for old_i in b.chapters.size():
-		if not has_chapter(id, old_i):
+	var moves := _chapter_moves(b.chapters, new_chapters)
+	if moves.is_empty() and _chapter_files(dir).is_empty():
+		_apply_chapter_list(b, new_chapters)
+		return
+	var staging := dir + "/staging"
+	DirAccess.make_dir_recursive_absolute(staging)
+	var staged := []
+	for mv in moves:
+		if mv[0] == mv[1] or not has_chapter(id, mv[0]):
 			continue
-		var key := chapter_key(b.chapters[old_i].url)
+		DirAccess.rename_absolute("%s/%d.json" % [dir, mv[0]], "%s/%d.json" % [staging, mv[0]])
+		staged.append(mv[0])
+	# Written after staging, so leftovers without one are moved back, never finished.
+	if not SafeFile.write_text(staging + "/plan.json", JSON.stringify({"chapters": new_chapters, "staged": staged})):
+		return
+	for mv in moves:
+		if mv[0] == mv[1]:
+			continue
+		var dst := "%s/%d.json" % [dir, mv[1]]
+		var src := "%s/%d.json" % [staging, mv[0]]
+		if FileAccess.file_exists(src):
+			DirAccess.remove_absolute(dst)  # some systems won't rename over a file
+			DirAccess.rename_absolute(src, dst)
+		elif not staged.has(mv[0]):
+			DirAccess.remove_absolute(dst)  # never downloaded: no text may stay under its index
+	_drop_unkept_chapters(dir, moves)
+	_apply_chapter_list(b, new_chapters)
+	flush()  # the new list is durable before its staging goes away
+	_remove_dir(staging)
+
+
+## Which old chapter indexes carry over to which new ones, matched by chapter
+## link; each kept chapter's word count moves onto its new entry. Moves that
+## overlap (old 2 -> new 3 while old 3 -> new 2) are safe: nothing is renamed
+## onto a file that still has to move.
+static func _chapter_moves(old_chapters: Array, new_chapters: Array) -> Array:
+	var moves := []
+	for old_i in old_chapters.size():
+		var key := chapter_key(str(old_chapters[old_i].get("url", "")))
 		for new_i in new_chapters.size():
-			if chapter_key(new_chapters[new_i].url) == key:
+			if chapter_key(str(new_chapters[new_i].get("url", ""))) == key:
 				moves.append([old_i, new_i])
-				if b.chapters[old_i].has("words"):
-					new_chapters[new_i].words = b.chapters[old_i].words
+				if (old_chapters[old_i] as Dictionary).has("words"):
+					new_chapters[new_i].words = old_chapters[old_i].words
 				break
-	for mv in moves:
-		DirAccess.rename_absolute("%s/%d.json" % [dir, mv[0]], "%s/%d.json.tmp" % [dir, mv[0]])
+	return moves
+
+
+## The book folder's chapter file indexes: every <int>.json in it, nothing else.
+static func _chapter_files(dir: String) -> Array:
+	var out := []
 	var d := DirAccess.open(dir)
-	if d:
-		for f in d.get_files():
-			if f.ends_with(".json"):
-				d.remove(f)  # chapters that no longer exist
+	if d == null:
+		return out
+	for f in d.get_files():
+		if f.ends_with(".json") and f.get_basename().is_valid_int():
+			out.append(f.get_basename().to_int())
+	return out
+
+
+## Deletes the book folder's chapter files no move targets: chapters that are
+## really gone (and stale files past the list). Only <int>.json files.
+static func _drop_unkept_chapters(dir: String, moves: Array) -> void:
+	var keep := {}
 	for mv in moves:
-		DirAccess.rename_absolute("%s/%d.json.tmp" % [dir, mv[0]], "%s/%d.json" % [dir, mv[1]])
+		keep[int(mv[1])] = true
+	var d := DirAccess.open(dir)
+	if d == null:
+		return
+	for f in d.get_files():
+		if f.ends_with(".json") and f.get_basename().is_valid_int() and not keep.has(f.get_basename().to_int()):
+			d.remove(f)
+
+
+## Points a book at its new chapter list, carrying progress and bookmarks over
+## by chapter link, then saves.
+func _apply_chapter_list(b: Dictionary, new_chapters: Array) -> void:
 	var prog: int = b.progress.chapter
 	var prog_key := chapter_key(b.chapters[prog].url) if prog < b.chapters.size() else ""
 	var mark_keys := []
@@ -463,9 +529,55 @@ func replace_chapters(id: String, new_chapters: Array) -> void:
 	b.rss_only = false
 	b.modified = Time.get_unix_time_from_system()
 	b.text_stamp = b.modified
-	save(id)
-	book_changed.emit(id)
+	save(b.id)
+	book_changed.emit(b.id)
 	changed.emit()
+
+
+## Finishes a replace_chapters run a crash left behind (see replace_chapters).
+## With no book the leftovers just go away. With no readable plan nothing was
+## moved into place or deleted (the manifest is written after staging), so staged
+## files move back. With a plan every kept file is either still staged or already
+## moved, so staging is moved into place, the rest is redone and the list applied.
+func _recover_replace(id: String) -> void:
+	var dir := book_dir(id)
+	var staging := dir + "/staging"
+	if not DirAccess.dir_exists_absolute(staging):
+		return
+	var b := get_book(id)
+	if b.is_empty():
+		_remove_dir(staging)
+		return
+	var plan: Variant = JSON.parse_string(FileAccess.get_file_as_string(staging + "/plan.json")) if FileAccess.file_exists(staging + "/plan.json") else {}
+	if not (plan is Dictionary and plan.get("chapters") is Array):
+		var d := DirAccess.open(staging)
+		if d != null:
+			for f in d.get_files():
+				if f.ends_with(".json") and f.get_basename().is_valid_int():
+					var dst := "%s/%s" % [dir, f]
+					DirAccess.remove_absolute(dst)
+					DirAccess.rename_absolute(staging + "/" + f, dst)
+		_remove_dir(staging)
+		return
+	var new_chapters: Array = plan.chapters
+	var was_staged := {}
+	for o in plan.get("staged", []):
+		was_staged[int(o)] = true
+	var moves := _chapter_moves(b.chapters, new_chapters)
+	for mv in moves:
+		if mv[0] == mv[1]:
+			continue
+		var dst := "%s/%d.json" % [dir, mv[1]]
+		if FileAccess.file_exists("%s/%d.json" % [staging, mv[0]]):
+			DirAccess.remove_absolute(dst)
+			DirAccess.rename_absolute("%s/%d.json" % [staging, mv[0]], dst)
+		elif not was_staged.has(mv[0]):
+			DirAccess.remove_absolute(dst)  # never downloaded: no text may stay under its index
+		# else already moved into place: keep it
+	_drop_unkept_chapters(dir, moves)
+	_apply_chapter_list(b, new_chapters)
+	flush()
+	_remove_dir(staging)
 
 
 ## True when the chapter is cached with its full text (not just an RSS preview).
@@ -1174,6 +1286,8 @@ func _forget_kept(id: String) -> void:
 
 func _load() -> void:
 	_load_from(Settings.data_dir())
+	for b in books:
+		_recover_replace(str(b.get("id", "")))
 
 
 ## Reads the book list in `dir` (its library.json and meta/); `_load` is this
@@ -1264,8 +1378,14 @@ static func _num(v: Variant) -> int:
 	return 0
 
 
+## A book id nobody uses yet: 64 random bits as lowercase hex, looped until neither
+## the books in memory nor anything on disk has it (a tight burst of imports once
+## collided ~7% of the time with 16 random bits per second-stamp).
 func _new_id() -> String:
-	return "%x%04x" % [int(Time.get_unix_time_from_system()), randi() % 0xffff]
+	var id := ""
+	while id == "" or not get_book(id).is_empty() or DirAccess.dir_exists_absolute(book_dir(id)) or FileAccess.file_exists(_meta_path(id)):
+		id = "%x%x" % [randi(), randi()]
+	return id
 
 
 func _norm_url(url: String) -> String:
@@ -1278,4 +1398,6 @@ func _remove_dir(path: String) -> void:
 		return
 	for f in dir.get_files():
 		dir.remove(f)
+	for s in dir.get_directories():
+		_remove_dir(path + "/" + s)  # a replace_chapters staging/ a crash left behind
 	DirAccess.remove_absolute(path)

@@ -64,6 +64,7 @@ const PACE := 0.1            # shortest gap between two requests on one connecti
 const PARALLEL := 4          # connections used for a book's chapters (Koofr takes ~0.3 s per request)
 const PACK_MIN := 10         # chapters of a book to send at once before they go in packs
 const PACK_BYTES := 2000000  # most chapter text in one pack, before it's gzipped
+const PACK_GZIP_MAX := 268435456  # biggest unpacked pack accepted (256 MiB); a pack holds at most PACK_BYTES of chapter text
 
 var running := false
 var last_error := ""
@@ -518,9 +519,7 @@ func _fetch_book_file(dav: WebDav, key: String, id: String, work: Dictionary) ->
 	_remote_books[id][key] = data
 	_cache.devices[id][key] = text.md5_text()
 	DirAccess.make_dir_recursive_absolute(_remote_dir() + "/" + id)
-	var f := FileAccess.open(_remote_path(id, key), FileAccess.WRITE)
-	if f:
-		f.store_string(text)
+	SafeFile.write_text(_remote_path(id, key), text)
 	return ""
 
 
@@ -962,12 +961,30 @@ func _remote_flags(remote: Array) -> Dictionary:
 
 # --- plugins -----------------------------------------------------------------
 
+## A name from another device that is safe to put in a server or local path (a
+## plugin id or version, a cover file name). Anything that could escape its
+## folder is refused, and the entry is skipped.
+static func _safe_name(s: String) -> bool:
+	if s == "" or s.begins_with(".") or s.length() > 128:
+		return false
+	for bad in ["/", "\\", ":", ".."]:
+		if bad in s:
+			return false
+	for b in s.to_utf8_buffer():
+		if b < 32 or b == 127:
+			return false
+	return true
+
+
 ## Install, update or remove plugins as other devices did, then upload the
 ## plugins this device has that the server doesn't have yet.
 func _sync_plugins(dav: WebDav, remote: Array) -> String:
 	var newest := SyncMerge.newest_plugin_records(remote)  # id -> the most recent record of any other device
 	var mine := Plugins.sync_records()
 	for id in newest:
+		if not (id is String and _safe_name(id)):
+			print("Sync: plugin %s: skipped: unsafe id" % str(id))
+			continue
 		var r: Dictionary = newest[id]
 		var m: Dictionary = mine.get(id, {})
 		if SyncMerge.num(r.get("t", 0)) <= SyncMerge.num(m.get("t", 0)):
@@ -978,6 +995,9 @@ func _sync_plugins(dav: WebDav, remote: Array) -> String:
 			continue
 		if not Plugins.get_entry(id).is_empty() and not m.get("removed", false) and Plugins.compare_versions(str(r.get("v", "")), str(m.get("v", ""))) <= 0:
 			continue  # already have this version (or a newer one)
+		if not _safe_name(str(r.get("v", ""))):
+			print("Sync: plugin %s: skipped: unsafe version" % id)
+			continue
 		_set_progress("Installing plugin %s…" % id)
 		await _download_plugin(dav, id, str(r.get("v", "")), SyncMerge.num(r.get("t", 0)))
 
@@ -988,6 +1008,9 @@ func _sync_plugins(dav: WebDav, remote: Array) -> String:
 	for id in have:
 		var r: Dictionary = have[id]
 		if r.get("removed", false):
+			continue
+		if not (id is String and _safe_name(id) and _safe_name(str(r.get("v", "")))):
+			print("Sync: plugin %s: skipped: unsafe id or version" % str(id))
 			continue
 		var files := Plugins.files_of(id)
 		if files.is_empty():
@@ -1037,6 +1060,9 @@ func _put_plugin_file(dav: WebDav, folder: String, rel: String, path: String, ma
 ## skips a plugin that can't run here without downloading its files. Any failure
 ## only skips this plugin (it's tried again next time); the rest of the sync goes on.
 func _download_plugin(dav: WebDav, id: String, version: String, stamp: float) -> void:
+	if not _safe_name(id) or not _safe_name(version):
+		print("Sync: plugin %s: skipped: unsafe id or version" % id)
+		return
 	var folder := FOLDER + "plugins/%s/%s/" % [id, version]
 	var g := await dav.fetch(folder + Plugins.MANIFEST)
 	if not g.ok:
@@ -1156,6 +1182,9 @@ func _sync_book(dav: WebDav, pool: Array[WebDav], b: Dictionary, folders: Dictio
 		_cache.missing[b.id] = missing
 
 	var cover: String = wanted.get("name", "")
+	if cover != "" and not _safe_name(cover):
+		print("Sync: book %s: skipped an unsafe cover name" % Library.sync_key(b))
+		cover = ""
 	var have_cover: bool = b.cover != "" and FileAccess.file_exists(b.cover)
 	var local_name := "cover-%s.png" % FileAccess.get_md5(b.cover).left(12) if have_cover else ""
 	# another device picked a different cover by hand after this one's was set
@@ -1177,10 +1206,7 @@ func _sync_book(dav: WebDav, pool: Array[WebDav], b: Dictionary, folders: Dictio
 		if g.ok and Image.new().load_png_from_buffer(g.body) == OK and not Library.get_book(b.id).is_empty():
 			DirAccess.make_dir_recursive_absolute(Settings.data_dir() + "/covers")
 			var path := "%s/covers/%s.png" % [Settings.data_dir(), b.id]
-			var f := FileAccess.open(path, FileAccess.WRITE)
-			if f:
-				f.store_buffer(g.body)
-				f.close()
+			if SafeFile.write_bytes(path, g.body):
 				_applying = true
 				Library.update_book(b.id, {"cover": path, "cover_set": float(wanted.get("set", 0)), "modified": b.modified})
 				_applying = false
@@ -1330,7 +1356,10 @@ func _get_pack(dav: WebDav, work: Dictionary, name: String) -> Dictionary:
 	var r := await dav.fetch(work.folder + name)
 	if not r.ok or Library.get_book(b.id).is_empty():
 		return r
-	var data: Variant = JSON.parse_string(r.body.decompress_dynamic(-1, FileAccess.COMPRESSION_GZIP).get_string_from_utf8())
+	var raw: PackedByteArray = r.body.decompress_dynamic(PACK_GZIP_MAX, FileAccess.COMPRESSION_GZIP)
+	if raw.is_empty():
+		return r  # damaged, or unpacks past PACK_GZIP_MAX: fetched one by one next time, if they have their own files
+	var data: Variant = JSON.parse_string(raw.get_string_from_utf8())
 	if not (data is Dictionary and data.get("chapters") is Dictionary):
 		return r  # damaged: its chapters are fetched one by one next time, if they have their own files
 	var saved := 0
@@ -1450,15 +1479,13 @@ func _load_state() -> void:
 
 
 func _save_state() -> void:
-	var f := FileAccess.open(_state_path(), FileAccess.WRITE)
-	if f:
-		f.store_string(JSON.stringify(_state, "\t"))
+	# Through a temp file: a half-written state would read as a new device id.
+	SafeFile.write_text(_state_path(), JSON.stringify(_state, "\t"))
 
 
 func _save_cache() -> void:
-	var f := FileAccess.open(_cache_path(), FileAccess.WRITE)
-	if f:
-		f.store_string(JSON.stringify(_cache))
+	# Through a temp file, like the state above.
+	SafeFile.write_text(_cache_path(), JSON.stringify(_cache))
 
 
 # --- the password ------------------------------------------------------------
@@ -1536,9 +1563,15 @@ static func _write_password(password: String, id: String, sealed: String, file: 
 			DirAccess.remove_absolute(file)
 		return "keyring"
 	Keyring.erase(id, sealed)  # don't leave an older password behind
-	var f := FileAccess.open_encrypted_with_pass(file, FileAccess.WRITE, key)
+	# Through a temp file, so a crash keeps the old password.
+	var tmp := file + ".tmp"
+	var f := FileAccess.open_encrypted_with_pass(tmp, FileAccess.WRITE, key)
 	if f:
 		f.store_string(password)
+		f.close()
+		if DirAccess.rename_absolute(tmp, file) != OK:
+			DirAccess.remove_absolute(file)
+			DirAccess.rename_absolute(tmp, file)
 	return "file"
 
 

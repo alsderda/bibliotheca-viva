@@ -232,6 +232,7 @@ func run(t: Node) -> void:
 	page.queue_free()
 	await t.get_tree().process_frame
 	await run_follow_checks(t)
+	await run_resilience_checks(t)
 
 
 ## The overlay covers exactly its paragraph's lines in the main label.
@@ -326,3 +327,155 @@ func run_follow_checks(t: Node) -> void:
 	t.check("sentence mode maps into the sentence mark", page2.tts._spoken_label_char() == want, true)
 	Settings.set_value("tts_mode", mode2)
 	page2.queue_free()
+
+
+## One failed clip ends that request instead of killing the helper, play() with nothing readable stops a running UI, the touch menu
+## opens at the touch point, and oversized EPUB entries fail with an error.
+func run_resilience_checks(t: Node) -> void:
+	# play() with nothing readable after playing stops the UI's Stop state.
+	var states: Array = []
+	var on_state := func(p): states.append(p)
+	Speech.state_changed.connect(on_state)
+	Speech.playing = true
+	Speech.play([], 0, "reader")
+	t.check("play() with nothing readable stops a running UI", states, [false])
+	t.check("play() with nothing readable clears playing", Speech.playing, false)
+	Speech.play([], 0, "reader")
+	t.check("play() with nothing readable stays quiet when idle", states, [false])
+	Speech.state_changed.disconnect(on_state)
+
+	# One failed Windows render ends that request; repeated ones give up.
+	var wv := WinVoice.new()  # never added, so the helper never starts
+	var ended: Array = []
+	var failed: Array = []
+	wv.ended.connect(func(id): ended.append(id))
+	wv.failed.connect(func(): failed.append(true))
+	_fail_clip(wv, 1, "k1", 7, "1\tERR\tboom")
+	t.check("one failed clip ends that request", ended, [7])
+	t.check("one failed clip clears the want", [wv._want_key, wv._want_id], ["", -1])
+	t.check("one failed clip keeps the helper", [wv.is_broken(), failed], [false, []])
+	_fail_clip(wv, 2, "k2", 8, "2\tERR\tboom")
+	t.check("two failed clips keep the helper", [wv.is_broken(), failed], [false, []])
+	_fail_clip(wv, 3, "k3", 9, "3\tERR\tboom")
+	t.check("repeated failures disable the helper", [wv.is_broken(), failed], [true, [true]])
+
+	# A good clip between failures resets the count.
+	var wv2 := WinVoice.new()
+	var ended2: Array = []
+	var failed2: Array = []
+	wv2.ended.connect(func(id): ended2.append(id))
+	wv2.failed.connect(func(): failed2.append(true))
+	wv2._dir = "user://"
+	_fail_clip(wv2, 1, "a", 11, "1\tERR\tx")
+	var wav := FileAccess.open("user://2.wav", FileAccess.WRITE)
+	wav.store_buffer(_tiny_wav_bytes())
+	wav.close()
+	wv2._req_key[2] = "b"
+	wv2._clips["b"] = null
+	wv2._on_line("2\tOK")
+	t.check("a good clip renders and resets the count", wv2._clips.get("b") != null, true)
+	_fail_clip(wv2, 3, "c", 12, "3\tERR\tx")
+	_fail_clip(wv2, 4, "d", 13, "4\tERR\tx")
+	t.check("failures after a good clip keep the helper", [wv2.is_broken(), failed2], [false, []])
+	t.check("skipped clips end their requests", ended2, [11, 12, 13])
+
+	# A double-tap opens the menu at the touch point, not card-local.
+	var card := BookCard.new()
+	t.add_child(card)
+	card.setup({"id": "check-card", "title": "Check", "author": "Anon", "kind": "epub",
+		"chapters": [{"title": "A"}], "progress": {"chapter": 0, "paragraph": 0}, "last_read": 0}, 168.0)
+	card.position = Vector2(100, 200)
+	await t.get_tree().process_frame
+	var at: Array = []
+	card.menu_requested.connect(func(id, pos): at.append(pos))
+	var touch := InputEventScreenTouch.new()
+	touch.pressed = true
+	touch.double_tap = true
+	touch.position = Vector2(10, 10)
+	card._on_input(touch)
+	var want: Vector2 = card.get_global_transform_with_canvas() * Vector2(10, 10)
+	t.check("double-tap menu opens at the touch point", at, [want])
+	t.check("double-tap menu position is not card-local", at[0] != Vector2(10, 10), true)
+	card.queue_free()
+
+	# A tiny EPUB imports; an entry over the cap fails with an error.
+	t.check("epub entry cap is 32 MiB", EpubLoader.MAX_ENTRY_BYTES, 32 * 1024 * 1024)
+	t.check("epub total cap is 512 MiB", EpubLoader.MAX_TOTAL_BYTES, 512 * 1024 * 1024)
+	var tiny := Settings.data_dir() + "/selftest-tiny.epub"
+	_write_epub(tiny, false)
+	var parsed := EpubLoader.load_epub(tiny)
+	t.check("tiny epub loads", [parsed.get("error", "unset"), parsed.get("title", ""), parsed.get("chapters", []).size()], ["unset", "Tiny", 1])
+	var big := Settings.data_dir() + "/selftest-big.epub"
+	_write_epub(big, true)
+	var refused := EpubLoader.load_epub(big)
+	t.check("oversized epub entry fails", refused.has("error"), true)
+	t.check("oversized epub error names the cap", str(refused.get("error", "")).contains("bigger than"), true)
+	DirAccess.remove_absolute(tiny)
+	DirAccess.remove_absolute(big)
+
+
+## A failed render for one request: the clip stays missing and the wanted
+## request waits no longer, as if the helper had answered for that request.
+static func _fail_clip(wv: WinVoice, req: int, key: String, id: int, line: String) -> void:
+	wv._req_key[req] = key
+	wv._clips[key] = null
+	wv._want_key = key
+	wv._want_id = id
+	wv._on_line(line)
+
+
+## 200 alternating samples of 16-bit mono PCM in a WAV header, for the WinVoice check.
+static func _tiny_wav_bytes() -> PackedByteArray:
+	var data := PackedByteArray()
+	data.resize(400)
+	for i in 200:
+		data.encode_s16(i * 2, 1200 if i % 2 == 0 else -1200)
+	var b := PackedByteArray()
+	b.resize(44)
+	b.encode_u32(0, 0x46464952)  # RIFF
+	b.encode_u32(4, 36 + data.size())
+	b.encode_u32(8, 0x45564157)  # WAVE
+	b.encode_u32(12, 0x20746D66)  # fmt + space
+	b.encode_u32(16, 16)
+	b.encode_u16(20, 1)
+	b.encode_u16(22, 1)
+	b.encode_u32(24, 22050)
+	b.encode_u32(28, 22050 * 2)
+	b.encode_u16(32, 2)
+	b.encode_u16(34, 16)
+	b.encode_u32(36, 0x61746164)  # data
+	b.encode_u32(40, data.size())
+	return b + data
+
+
+## A minimal two-file EPUB, with an extra oversized entry when `big` is set.
+static func _write_epub(path: String, big: bool) -> void:
+	var chapter := "OEBPS/ch1.xhtml"
+	var manifest := '<item id="c1" href="ch1.xhtml" media-type="application/xhtml+xml"/>'
+	var spine := '<itemref idref="c1"/>'
+	if big:
+		manifest += '<item id="big" href="big.xhtml" media-type="application/xhtml+xml"/>'
+		spine += '<itemref idref="big"/>'
+	var opf := '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0">'
+	opf += '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Tiny</dc:title>'
+	opf += '<dc:creator>Anon</dc:creator></metadata><manifest>' + manifest + '</manifest>'
+	opf += '<spine>' + spine + '</spine></package>'
+	var zip := ZIPPacker.new()
+	zip.open(path)
+	zip.start_file("META-INF/container.xml")
+	zip.write_file('<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>'.to_utf8_buffer())
+	zip.close_file()
+	zip.start_file("OEBPS/content.opf")
+	zip.write_file(opf.to_utf8_buffer())
+	zip.close_file()
+	zip.start_file(chapter)
+	zip.write_file('<html xmlns="http://www.w3.org/1999/xhtml"><head><title>T</title></head><body><p>Hello alder grove meadow.</p></body></html>'.to_utf8_buffer())
+	zip.close_file()
+	if big:
+		var huge := PackedByteArray()
+		huge.resize(EpubLoader.MAX_ENTRY_BYTES + 1)
+		huge.fill(97)
+		zip.start_file("OEBPS/big.xhtml")
+		zip.write_file(huge)
+		zip.close_file()
+	zip.close()

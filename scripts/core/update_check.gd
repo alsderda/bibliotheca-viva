@@ -16,12 +16,20 @@ var _checked_at := 0.0
 var _busy := false
 
 
+## True when the app runs a test, which stays off the network. The test flags
+## take an optional "=value" (e.g. "--synctest=a_seed").
+static func is_test_args(args: Array) -> bool:
+	for arg in args:
+		if str(arg).get_slice("=", 0) in ["--selftest", "--plugintest", "--synctest"]:
+			return true
+	return false
+
+
 func _ready() -> void:
 	_load()
 	_update_latest(latest, latest_url, latest_prerelease)  # a saved find is dropped if this build is as new by now
-	for arg in OS.get_cmdline_user_args():
-		if arg in ["--selftest", "--plugintest", "--synctest"]:
-			return  # tests stay off the network
+	if is_test_args(OS.get_cmdline_user_args()):
+		return  # tests stay off the network
 	var t := Timer.new()
 	t.wait_time = 15 * 60  # cheap: check() returns at once until the four hours are up
 	t.timeout.connect(check)

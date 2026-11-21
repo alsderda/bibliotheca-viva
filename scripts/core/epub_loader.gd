@@ -5,6 +5,12 @@ class_name EpubLoader
 ## on the first page, where e.g. FicHub writes the original source), so their
 ## chapters can fill a web book.
 
+## One hostile archive entry must not use up a phone's memory: ZIPReader only
+## hands over entries whole, so each entry and their running total are capped
+## (sizes are checked after each read, the earliest this API allows).
+const MAX_ENTRY_BYTES := 32 * 1024 * 1024
+const MAX_TOTAL_BYTES := 512 * 1024 * 1024
+
 
 static func load_epub(path: String) -> Dictionary:
 	var zip := ZIPReader.new()
@@ -13,15 +19,22 @@ static func load_epub(path: String) -> Dictionary:
 	var files := {}
 	for f in zip.get_files():
 		files[f] = true
+	var quota := {"total": 0, "error": "", "book": path.get_file()}
 
-	var container := _text(zip, "META-INF/container.xml")
+	var container := _text(zip, "META-INF/container.xml", quota)
+	if quota.error != "":
+		zip.close()
+		return {"error": quota.error}
 	var m := HtmlText._re("full-path\\s*=\\s*\"([^\"]+)\"").search(container)
 	if m == null:
 		zip.close()
 		return {"error": "Not a valid EPUB (missing container.xml)"}
 	var opf_path := m.get_string(1)
 	var base := opf_path.get_base_dir()
-	var opf := _text(zip, opf_path)
+	var opf := _text(zip, opf_path, quota)
+	if quota.error != "":
+		zip.close()
+		return {"error": quota.error}
 
 	var title := _tag(opf, "dc:title")
 	var author := _tag(opf, "dc:creator")
@@ -61,9 +74,9 @@ static func load_epub(path: String) -> Dictionary:
 	for id in manifest:
 		var it: Dictionary = manifest[id]
 		if "nav" in it.props.split(" "):
-			_read_nav(_text(zip, it.href), it.href.get_base_dir(), toc)
+			_read_nav(_text(zip, it.href, quota), it.href.get_base_dir(), toc)
 		elif it.type == "application/x-dtbncx+xml":
-			_read_ncx(_text(zip, it.href), it.href.get_base_dir(), toc)
+			_read_ncx(_text(zip, it.href, quota), it.href.get_base_dir(), toc)
 
 	# spine
 	var chapters: Array = []
@@ -75,7 +88,10 @@ static func load_epub(path: String) -> Dictionary:
 		var href: String = manifest[idref].href
 		if not files.has(href):
 			continue
-		var html := _text(zip, href)
+		var html := _text(zip, href, quota)
+		if quota.error != "":
+			zip.close()
+			return {"error": quota.error}
 		var paragraphs := HtmlText.to_paragraphs(html)
 		if paragraphs.is_empty():
 			continue
@@ -97,7 +113,11 @@ static func load_epub(path: String) -> Dictionary:
 
 	var cover: Image = null
 	if cover_href != "" and files.has(cover_href):
-		cover = Net.image_from_bytes(zip.read_file(cover_href))
+		var cover_bytes := _read(zip, cover_href, quota)
+		if quota.error != "":
+			zip.close()
+			return {"error": quota.error}
+		cover = Net.image_from_bytes(cover_bytes)
 	zip.close()
 
 	if chapters.is_empty():
@@ -128,8 +148,22 @@ static func _read_ncx(xml: String, dir: String, toc: Dictionary) -> void:
 			toc[file] = label
 
 
-static func _text(zip: ZIPReader, path: String) -> String:
-	return zip.read_file(path).get_string_from_utf8()
+static func _text(zip: ZIPReader, path: String, quota: Dictionary) -> String:
+	return _read(zip, path, quota).get_string_from_utf8()
+
+
+## One entry, counted against the running total; empty with quota.error set
+## when the entry or the total is over the cap (load_epub stops at once).
+static func _read(zip: ZIPReader, path: String, quota: Dictionary) -> PackedByteArray:
+	var b := zip.read_file(path)
+	if b.size() > MAX_ENTRY_BYTES:
+		quota.error = "An entry in %s is bigger than %d MB" % [quota.book, MAX_ENTRY_BYTES / 1024 / 1024]
+		return PackedByteArray()
+	quota.total += b.size()
+	if quota.total > MAX_TOTAL_BYTES:
+		quota.error = "%s is bigger than %d MB unpacked" % [quota.book, MAX_TOTAL_BYTES / 1024 / 1024]
+		return PackedByteArray()
+	return b
 
 
 static func _tag(xml: String, tag: String) -> String:

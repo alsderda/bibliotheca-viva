@@ -163,10 +163,13 @@ func open_system_settings() -> bool:
 ## Start reading `paras` ([{text, kind}] or plain strings) from paragraph `start`.
 ## `title` and `subtitle` (book and chapter) are shown in Android's media notification.
 func play(paras: Array, start := 0, who := "reader", title := "", subtitle := "") -> void:
+	var was_playing := playing
 	_halt()
 	source_owner = who
 	items = _normalize(paras)
 	if items.is_empty():
+		if was_playing:
+			state_changed.emit(false)
 		return
 	playing = true
 	paused = false

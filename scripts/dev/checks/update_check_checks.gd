@@ -26,6 +26,7 @@ class NoQuick extends SourcePlugin:
 
 func run(t: Node) -> void:
 	await t.get_tree().process_frame
+	_flags(t)
 	_latest(t)
 	_due(t)
 	_back(t)
@@ -61,6 +62,16 @@ func _book(chapters: Array, last_full_check: float, extra := {}, words := 0) -> 
 		"url": "https://example.com/b", "chapters": chapters, "extra": extra,
 		"total_words": words, "last_full_check": last_full_check,
 		"last_checked": Time.get_unix_time_from_system() - 100})
+
+
+## The update check stays off the network for every test flag, with or without "=value".
+func _flags(t: Node) -> void:
+	t.check("selftest flag stays offline", UpdateCheck.is_test_args(["--profile=selftest", "--selftest"]), true)
+	t.check("synctest flag with a step stays offline", UpdateCheck.is_test_args(["--synctest=a_seed"]), true)
+	t.check("plugintest flag with a link stays offline", UpdateCheck.is_test_args(["--plugintest=https://example.com/x"]), true)
+	t.check("other flags stay online", UpdateCheck.is_test_args(["--live"]), false)
+	t.check("no flags stay online", UpdateCheck.is_test_args([]), false)
+	t.check("lookalike flag stays online", UpdateCheck.is_test_args(["--synctestfoo"]), false)
 
 
 func _latest(t: Node) -> void:
