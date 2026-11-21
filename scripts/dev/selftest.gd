@@ -25,7 +25,7 @@ func _ready() -> void:
 	await _search_box()
 	await _fetch_manager()
 	await _pacing()
-	for area in ["storage", "sync", "plugin_data", "reader"]:
+	for area in ["storage", "sync", "plugin_data", "reader", "book_groups"]:
 		await load("res://scripts/dev/checks/%s_checks.gd" % area).new().run(self)
 	print("SELFTEST ", "PASSED" if failures == 0 else "FAILED (%d)" % failures)
 	get_tree().quit(failures)

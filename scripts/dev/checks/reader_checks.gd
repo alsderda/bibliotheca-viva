@@ -83,5 +83,62 @@ func run(t: Node) -> void:
 	ms = (Time.get_ticks_usec() - t0) / 1000.0 / 80.0
 	print("    long-chapter full-render change: %.2f ms average over 80 changes" % ms)
 	t.check("full render restores cleared text", page._text.text == plain, true)
+
+	# Contents tab: a long chapter list is split into collapsible groups, with
+	# only the current chapter's group expanded and the rest built on first open.
+	var contents := ReaderPage.new()
+	t.add_child(contents)
+	var chapters := []
+	for i in 230:
+		chapters.append({"title": "Chapter %d" % (i + 1)})
+	contents.book = {"id": "contents-check", "title": "Made-Up Serial", "author": "", "kind": "epub",
+		"chapters": chapters, "progress": {"chapter": 120, "paragraph": 0}, "last_read": 1}
+	contents.chapter = 120
+	contents._build_contents()
+	var titles := PackedStringArray()
+	for c in chapters:
+		titles.append(c.title)
+	var groups := BookGroups.split(titles, int(Settings.get_value("contents_group_size")))
+	var headers: Array = []
+	var boxes: Array = []
+	var rows := contents._contents_list.get_children()
+	for i in rows.size():
+		if rows[i] is Button and rows[i].has_meta("group_start"):
+			headers.append(rows[i])
+			boxes.append(rows[i + 1] if i + 1 < rows.size() else null)
+	t.check("contents has one header per group", headers.size() == groups.size(), true)
+	if groups.is_empty():
+		var flat := 0
+		for c in rows:
+			if c is Button:
+				flat += 1
+		t.check("short contents stays flat", flat == 230, true)
+	else:
+		var cur := -1
+		for h in groups.size():
+			if int(groups[h].start) <= 120 and 120 < int(groups[h].end):
+				cur = h
+		var only_cur := cur >= 0
+		var lazy := true
+		for h in headers.size():
+			var open: bool = boxes[h] != null and (boxes[h] as Control).visible
+			if (h == cur) != open:
+				only_cur = false
+			var filled := (boxes[h] as VBoxContainer).get_child_count() if boxes[h] != null else -1
+			if (filled > 0) != open or (open and filled != int(groups[h].end) - int(groups[h].start)):
+				lazy = false
+		t.check("contents expands only the current chapter's group", only_cur, true)
+		t.check("contents builds collapsed groups lazily", lazy, true)
+		if headers.size() > 1:
+			var other := 0 if cur != 0 else 1
+			var box := boxes[other] as VBoxContainer
+			(headers[other] as Button).pressed.emit()
+			t.check("toggling a group fills it in place", box.visible
+				and box.get_child_count() == int(groups[other].end) - int(groups[other].start)
+				and contents._contents_list.get_children().size() == rows.size()
+				and (boxes[cur] as Control).visible, true)
+			(headers[other] as Button).pressed.emit()
+			t.check("toggling again collapses the group", not box.visible, true)
+	contents.queue_free()
 	page.queue_free()
 	await t.get_tree().process_frame
