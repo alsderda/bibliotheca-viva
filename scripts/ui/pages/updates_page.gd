@@ -263,7 +263,7 @@ func _following(books: Array) -> void:
 		t.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		t.custom_minimum_size.x = 120
 		col.add_child(t)
-		col.add_child(UI.label(BookCard._source_name(b) + ("  ·  RSS" if b.get("rss_only") else ""), "Small"))
+		col.add_child(UI.label(BookCard._source_name(b) + ("  ·  RSS" if b.get("rss_only") else "") + ("  ·  Some chapters may be missing" if b.get("possible_gap", false) else ""), "Small"))
 		var unread: int = unread_count(b)
 		col.add_child(UI.label("%d chapters  ·  %d unread" % [b.chapters.size(), unread], "Muted"))
 		col.add_child(UI.label("Checked " + UI.relative_time(b.get("last_checked", 0)), "Small"))

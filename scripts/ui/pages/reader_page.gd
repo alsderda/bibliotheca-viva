@@ -1019,6 +1019,10 @@ func _build_details() -> void:
 		tb.tooltip_text = "Show the books tagged “%s”" % tag
 		chips.add_child(tb)
 	col.add_child(UI.margin(chips, 0, 4, 0, 8))
+	if book.get("possible_gap", false):
+		var gap := UI.label("Some new chapters may be missing. Open the book in the Web tab to fill them in.", "Small", true)
+		gap.add_theme_color_override("font_color", UiTheme.WARN)
+		col.add_child(gap)
 	var stats := HFlowContainer.new()  # wraps on narrow (phone) screens
 	stats.add_theme_constant_override("h_separation", 28)
 	stats.add_theme_constant_override("v_separation", 14)

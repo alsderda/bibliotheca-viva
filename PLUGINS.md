@@ -78,6 +78,18 @@ func fetch_novel(url: String) -> Dictionary:
 		"words": 0}, "error": ""}  # optional: the book's word count as the site reports it
 
 
+func fetch_latest(url: String) -> Dictionary:
+	var r: Dictionary = await Net.get_text(BASE + "/feed/story/" + book_key(url).trim_prefix("mysite:"))
+	if is_blocked(r):
+		return {"chapters": [], "error": blocked_message(), "blocked": true}
+	var chapters := []
+	for m in re("(?is)<item>(.*?)</item>").search_all(r.get("text", "")):
+		var item: String = m.get_string(1)
+		chapters.push_front({"title": text(element(item, "<title", "title")),
+			"url": absolute(text(element(item, "<link", "link")), BASE), "date": 0})
+	return {"chapters": chapters, "error": ""}
+
+
 func fetch_chapter(_book: Dictionary, chapter: Dictionary, _index: int) -> Dictionary:
 	var r: Dictionary = await Net.get_text(chapter.url)
 	if is_blocked(r):
@@ -95,7 +107,8 @@ Everything in `SourcePlugin` has a default, so override only what the site suppo
 | `book_key(url)`, `chapter_key(url)` | The same book or chapter under different links (slugs, mobile hosts, queries) gets one key. `""` compares plain links. Keep keys stable: Sync uses them to match chapters across devices. |
 | `search_sources()`, `search(query, key)` | The entries Browse lists for this plugin, and the search itself. |
 | `search_url(query)` | The site's own search page, offered in the Web tab when the app is blocked. |
-| `fetch_novel(url)`, `fetch_chapter(book, chapter, index)` | Add a book by link (also used to check for new chapters), and download one chapter. Return `"blocked": true` / `"error": "blocked"` for a bot check. Chapters may carry `excerpt_html` (e.g. from a feed): the app keeps it as a preview until the full text is downloaded. If the site shows the book's word count, return it as `words`: the book page shows it next to the count of the saved chapters (the app counts those itself). |
+| `fetch_novel(url)`, `fetch_chapter(book, chapter, index)` | Add a book by link, and download one chapter. `fetch_novel` is also used to check for new chapters when the plugin has no `fetch_latest`, when the quick list doesn't reach back far enough, or when the weekly full check is due. Return `"blocked": true` / `"error": "blocked"` for a bot check. Chapters may carry `excerpt_html` (e.g. from a feed): the app keeps it as a preview until the full text is downloaded. If the site shows the book's word count, return it as `words`: the book page shows it next to the count of the saved chapters (the app counts those itself). |
+| `fetch_latest(url)` | The book's newest chapters for a quick update check, from something cheaper than the page `fetch_novel` reads (e.g. a feed). `{}` = the plugin has no such list. Returns `{chapters: [{title, url, date, excerpt_html?}], error, blocked}`, oldest first like `fetch_novel`. A short list is fine: the app checks it reaches back to chapters the book already has, and does a full check otherwise (and at least weekly). |
 | `library_filters()`, `library_filter_matches(book, key, value)` | Extra filters on the Library page, shown once the plugin is picked as the source: `[{"key": "status", "label": "Status", "options": [{"key": "completed", "label": "Completed"}]}]`. The app adds "Any" to each. By default a book matches when the `extra` from `fetch_novel` has that value under `key` (or contains it, for a list); override `library_filter_matches` for anything else. No filters: none are shown. |
 | `library_tags(book)` | The tags the Library's Tag picker offers for the book. Default: all its tags. A site that gives each book dozens of tags can offer a few broad ones instead; they don't have to be among the book's tags, and picking one also shows the books it was offered for. The book keeps all its tags (on its Details tab, where they can still be tapped). |
 | `is_listing_url`, `listing_name`, `listing_tip` | Saved searches: a page that lists works can be saved. A saved search is a link: the app never fetches it. When you open it in the Web tab, the works on the page (see web.js) are compared with the ones seen last time, and new ones are highlighted. Where there's no Web tab (Android), it opens in the system browser. |

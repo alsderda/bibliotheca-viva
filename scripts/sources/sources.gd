@@ -7,6 +7,10 @@ extends Node
 ## first: background work (reading ahead, update checks) for the same plugin waits
 ## until it's done before starting its next step. Net paces the requests themselves.
 
+## A book whose last full chapter list is this old gets a full check again: a
+## short quick list may have missed chapters in between.
+const FULL_CHECK_DAYS := 7
+
 var _user_jobs := {}  # plugin id -> jobs the user is waiting for, running now
 
 
@@ -77,6 +81,32 @@ static func norm_novel(n: Variant, plugin_name: String, url_fallback := "") -> D
 	if extra is Dictionary:
 		out.extra = extra
 	return {"novel": out}
+
+
+## A quick update check result: {chapters}, {} when there's nothing usable (so
+## the caller does a full check instead), or {error, blocked} for a bot check.
+## One chapter without a link poisons the whole list: dropping it could hide a
+## gap in the middle.
+static func norm_latest(r: Variant, plugin_name: String) -> Dictionary:
+	if not (r is Dictionary):
+		return {}
+	if r.is_empty():
+		return {}
+	if bool(r.get("blocked", false)):
+		var e := str(r.get("error", ""))
+		return {"error": e if e != "" else "%s is showing a bot check to the app." % plugin_name, "blocked": true}
+	if str(r.get("error", "")) != "":
+		return {}
+	var raw: Variant = r.get("chapters", null)
+	if not (raw is Array) or raw.is_empty():
+		return {}
+	var chapters := []
+	for c in raw:
+		var nc := norm_chapter(c)
+		if nc.is_empty():
+			return {}
+		chapters.append(nc)
+	return {"chapters": chapters}
 
 
 ## A whole search result: {results, error, blocked}, dropping items without a
@@ -159,13 +189,17 @@ func add_from_url(url: String) -> Dictionary:
 		checked.web_url = url
 		return checked
 	var n: Dictionary = checked.novel
+	var now := Time.get_unix_time_from_system()
 	var book := Library.add_book({
 		"title": n.title, "author": n.get("author", ""), "kind": "web", "source": source,
 		"url": n.get("url", url), "cover_url": n.get("cover_url", ""), "synopsis": n.get("synopsis", ""),
 		"tags": n.get("tags", []), "extra": n.get("extra", {}), "rss_only": res.get("rss_only", false),
 		"total_words": int(n.get("words", 0)),
 		"chapters": n.chapters.map(func(c): return {"title": c.title, "url": c.url, "date": c.date}),
-		"last_checked": Time.get_unix_time_from_system(),
+		"last_checked": now,
+		# Adding reads the full list, so it counts as a full check, unless the
+		# plugin fell back to its short list.
+		"last_full_check": 0 if bool(res.get("rss_only", false)) else now,
 	})
 	_store_excerpts(book, n.chapters, 0)
 	fetch_cover(book)
@@ -218,7 +252,58 @@ func refresh(book: Dictionary, background := false) -> Dictionary:
 	return await Net.shared("refresh\n" + str(book.id), func(): return await _refresh(p, book, background))
 
 
-func _refresh(p: SourcePlugin, book: Dictionary, background: bool) -> Dictionary:
+## True when the next update check must read the book's full chapter list: new
+## books, books never fully checked, and books whose last full check is
+## FULL_CHECK_DAYS old or more.
+static func full_check_due(book: Dictionary, now: float) -> bool:
+	if (book.get("chapters", []) as Array).is_empty():
+		return true
+	var last := float(book.get("last_full_check", 0))
+	if last <= 0:
+		return true
+	return now - last >= float(FULL_CHECK_DAYS) * 86400.0
+
+
+## Whether the quick list's oldest chapter is already in the book, so nothing
+## between the book and the quick list was missed.
+static func reaches_back(book: Dictionary, chapters: Array) -> bool:
+	if chapters.is_empty() or not (chapters[0] is Dictionary):
+		return false
+	var first := Library.chapter_key(str(chapters[0].get("url", "")))
+	for c in book.get("chapters", []):
+		if Library.chapter_key(str(c.get("url", ""))) == first:
+			return true
+	return false
+
+
+## Merge `chapters` into the book (unknown ones appended, missing dates filled
+## in, previews stored) and save it with `fields` plus the new list. Only a
+## full check passes extra/total_words/last_full_check/possible_gap in fields;
+## a quick check passes {} so those stay untouched.
+func _merge(book: Dictionary, chapters: Array, fields: Dictionary) -> Dictionary:
+	var known := {}
+	for c in book.chapters:
+		known[Library.chapter_key(c.url)] = c
+	var added := 0
+	var first_new: int = book.chapters.size()
+	for c in chapters:
+		var old: Variant = known.get(Library.chapter_key(c.url))
+		if old == null:
+			book.chapters.append({"title": c.title, "url": c.url, "date": c.get("date", 0)})
+			added += 1
+		elif float(old.get("date", 0)) <= 0 and float(c.get("date", 0)) > 0:
+			old.date = c.date  # fill in dates an older plugin version didn't report
+	_store_excerpts(book, chapters, 0)
+	fields["last_checked"] = Time.get_unix_time_from_system()
+	fields["chapters"] = book.chapters
+	Library.update_book(book.id, fields)
+	return {"new": added, "error": "", "first_new": first_new}
+
+
+## A full update check: read the whole chapter list and merge it. A short
+## rss_only fallback list isn't a full list: it leaves last_full_check alone
+## and flags a gap it can't fill.
+func _full_check(p: SourcePlugin, book: Dictionary, background: bool, now: float) -> Dictionary:
 	var res: Variant = await _run(p.id, background, func(): return await p.fetch_novel(book.url))
 	if res is Dictionary and str(res.get("error", "")) != "":
 		return {"new": 0, "error": str(res.error)}
@@ -226,26 +311,41 @@ func _refresh(p: SourcePlugin, book: Dictionary, background: bool) -> Dictionary
 	if checked.has("error"):
 		return {"new": 0, "error": checked.error}
 	var novel: Dictionary = checked.novel
-	var known := {}
-	for c in book.chapters:
-		known[Library.chapter_key(c.url)] = c
-	var added := 0
-	var first_new: int = book.chapters.size()
-	for c in novel.chapters:
-		var old: Variant = known.get(Library.chapter_key(c.url))
-		if old == null:
-			book.chapters.append({"title": c.title, "url": c.url, "date": c.get("date", 0)})
-			added += 1
-		elif float(old.get("date", 0)) <= 0 and float(c.get("date", 0)) > 0:
-			old.date = c.date  # fill in dates an older plugin version didn't report
-	_store_excerpts(book, novel.chapters, 0)
-	var fields := {"last_checked": Time.get_unix_time_from_system(), "chapters": book.chapters}
+	var fields := {}
 	if novel.has("extra"):
 		fields.extra = novel.extra
 	if int(novel.get("words", 0)) > 0:
 		fields.total_words = int(novel.words)
-	Library.update_book(book.id, fields)
-	return {"new": added, "error": "", "first_new": first_new}
+	if bool(res.get("rss_only", false)):
+		if not book.chapters.is_empty() and not reaches_back(book, novel.chapters):
+			fields.possible_gap = true
+		return _merge(book, novel.chapters, fields)
+	fields.last_full_check = now
+	fields.possible_gap = false
+	return _merge(book, novel.chapters, fields)
+
+
+func _refresh(p: SourcePlugin, book: Dictionary, background: bool) -> Dictionary:
+	var now := Time.get_unix_time_from_system()
+	if full_check_due(book, now):
+		return await _full_check(p, book, background, now)
+	var quick: Variant = await _run(p.id, background, func(): return await p.fetch_latest(book.url))
+	var q := norm_latest(quick, p.name)
+	if q.has("error"):
+		# Blocked: the fetch queue already backs off this site, and the full
+		# page would be blocked too, so don't try it.
+		return {"new": 0, "error": str(q.error)}
+	if q.is_empty():
+		return await _full_check(p, book, background, now)
+	var chapters: Array = q.chapters
+	if reaches_back(book, chapters):
+		return _merge(book, chapters, {})
+	var full := await _full_check(p, book, background, now)
+	if str(full.get("error", "")) != "":
+		# A gap was found but no full list could be fetched: flag it, and keep
+		# the quick chapters so the reader still gets the new ones.
+		_merge(book, chapters, {"possible_gap": true})
+	return full
 
 
 func missing_plugin_message(book: Dictionary) -> String:

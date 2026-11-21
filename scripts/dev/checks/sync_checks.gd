@@ -59,12 +59,24 @@ func _decisions(t: Node, key_of: Callable) -> void:
 	var merged := SyncMerge.combined_chapters(web, [{"chapters": [{"title": "A", "url": "u1"}, {"title": "B", "url": "u2"}]}], key_of)
 	t.check("web lists combine", merged.map(func(c): return c.title), ["A", "B"])
 	t.check("detail fields take the newest", SyncMerge.detail_fields({"modified": 1.0, "title": "Old", "last_checked": 1.0},
-		{"modified": 2.0, "title": "New", "last_checked": 0.0}), {"modified": 2.0, "title": "New", "last_checked": 1.0})
+		{"modified": 2.0, "title": "New", "last_checked": 0.0}), {"modified": 2.0, "title": "New", "last_checked": 1.0,
+		"last_full_check": 0.0, "possible_gap": false})
 	var tagged := SyncMerge.detail_fields({"modified": 1.0, "tags": ["A"], "tags_set": false, "last_checked": 1.0},
 		{"modified": 2.0, "tags": ["B"], "tags_set": true, "last_checked": 0.0})
 	t.check("detail fields take tags_set from the newer entry", [tagged.get("tags"), tagged.get("tags_set")], [["B"], true])
 	t.check("detail fields keep this device's when newer", SyncMerge.detail_fields({"modified": 3.0, "tags_set": true, "last_checked": 1.0},
 		{"modified": 2.0, "tags_set": false, "last_checked": 0.0}).has("tags_set"), false)
+	var gap_local := SyncMerge.detail_fields({"modified": 1.0, "last_full_check": 9.0, "possible_gap": false},
+		{"modified": 2.0, "last_full_check": 3.0, "possible_gap": true})
+	t.check("detail fields keep the newer last_full_check", gap_local.get("last_full_check"), 9.0)
+	t.check("detail fields clear the gap with the newer full check", gap_local.get("possible_gap"), false)
+	var gap_remote := SyncMerge.detail_fields({"modified": 3.0, "last_full_check": 2.0, "possible_gap": false},
+		{"modified": 2.0, "last_full_check": 8.0, "possible_gap": true})
+	t.check("detail fields take the newer last_full_check", gap_remote.get("last_full_check"), 8.0)
+	t.check("detail fields take the gap with the newer full check", gap_remote.get("possible_gap"), true)
+	t.check("detail fields keep a gap flag on a tied full check", SyncMerge.detail_fields(
+		{"modified": 1.0, "last_full_check": 5.0, "possible_gap": false},
+		{"modified": 2.0, "last_full_check": 5.0, "possible_gap": true}).get("possible_gap"), true)
 
 	var docs := [{"settings": {"v": {"v": 1, "t": 5.0}}}, {"settings": {"v": {"v": 2, "t": 9.0}, "w": {"v": 1, "t": 3.0}}}]
 	t.check("newest setting wins", SyncMerge.winning_settings(docs, {}), {"v": {"v": 2, "t": 9.0}, "w": {"v": 1, "t": 3.0}})
