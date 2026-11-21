@@ -60,6 +60,11 @@ func _decisions(t: Node, key_of: Callable) -> void:
 	t.check("web lists combine", merged.map(func(c): return c.title), ["A", "B"])
 	t.check("detail fields take the newest", SyncMerge.detail_fields({"modified": 1.0, "title": "Old", "last_checked": 1.0},
 		{"modified": 2.0, "title": "New", "last_checked": 0.0}), {"modified": 2.0, "title": "New", "last_checked": 1.0})
+	var tagged := SyncMerge.detail_fields({"modified": 1.0, "tags": ["A"], "tags_set": false, "last_checked": 1.0},
+		{"modified": 2.0, "tags": ["B"], "tags_set": true, "last_checked": 0.0})
+	t.check("detail fields take tags_set from the newer entry", [tagged.get("tags"), tagged.get("tags_set")], [["B"], true])
+	t.check("detail fields keep this device's when newer", SyncMerge.detail_fields({"modified": 3.0, "tags_set": true, "last_checked": 1.0},
+		{"modified": 2.0, "tags_set": false, "last_checked": 0.0}).has("tags_set"), false)
 
 	var docs := [{"settings": {"v": {"v": 1, "t": 5.0}}}, {"settings": {"v": {"v": 2, "t": 9.0}, "w": {"v": 1, "t": 3.0}}}]
 	t.check("newest setting wins", SyncMerge.winning_settings(docs, {}), {"v": {"v": 2, "t": 9.0}, "w": {"v": 1, "t": 3.0}})

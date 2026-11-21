@@ -10,7 +10,7 @@ extends Node
 ##
 ## Book dictionary:
 ##   id, title, author, kind ("epub" | "txt" | "web"), source ("file" | "web" | the id of the plugin that fetches it),
-##   url, cover (path or ""), cover_set (unix time the cover was picked by hand, else 0), cover_url, synopsis, tags, rss_only, extra (the plugin's own data, see SourcePlugin),
+##   url, cover (path or ""), cover_set (unix time the cover was picked by hand, else 0), cover_url, synopsis, tags, tags_set (true once the reader changed a plugin book's tags by hand, see picker_tags), rss_only, extra (the plugin's own data, see SourcePlugin),
 ##   total_words (the book's length as the site reports it, 0 if unknown),
 ##   chapters: [{title, url, date, words}] (words: set once the chapter's full text is saved), progress: {chapter, paragraph}, added, last_read, last_checked,
 ##   modified (last local change to anything but progress and bookmarks), sync_key (see Sync),
@@ -145,7 +145,7 @@ func is_reading(book: Dictionary) -> bool:
 func add_book(data: Dictionary) -> Dictionary:
 	var book := {
 		"id": _new_id(), "title": "Untitled", "author": "", "kind": "web", "source": "file",
-		"url": "", "cover": "", "cover_set": 0, "cover_url": "", "synopsis": "", "tags": [], "extra": {}, "rss_only": false,
+		"url": "", "cover": "", "cover_set": 0, "cover_url": "", "synopsis": "", "tags": [], "tags_set": false, "extra": {}, "rss_only": false,
 		"total_words": 0, "chapters": [], "progress": {"chapter": 0, "paragraph": 0},
 		"added": Time.get_unix_time_from_system(), "last_read": 0, "last_checked": 0,
 		"modified": Time.get_unix_time_from_system(),
@@ -502,25 +502,40 @@ func set_cover_from_bytes(id: String, bytes: PackedByteArray) -> String:
 	return ""
 
 
-## Changes an imported book's title, author, description and tags (any of
-## them; tags as an Array or comma-separated text). -> error or ""
+## Fields edit_details accepts for a book: title, author, description and tags
+## for an imported book; title and tags for a web book (its author and
+## description come from the site). [] when it can't be edited.
+static func editable_fields(book: Dictionary) -> Array:
+	if is_file_book(book):
+		return ["title", "author", "synopsis", "tags"]
+	if book.get("kind", "") == "web":
+		return ["title", "tags"]
+	return []
+
+
+## Changes a book's details (any of editable_fields; tags as an Array or
+## comma-separated text). A web book's title and tags stay as set here: checking
+## it for new chapters never rewrites them. -> error or ""
 func edit_details(id: String, fields: Dictionary) -> String:
 	var b := get_book(id)
 	if b.is_empty():
 		return "The book is gone"
-	if not is_file_book(b):
-		return "Only imported books can be edited"
+	var allowed := editable_fields(b)
+	if allowed.is_empty():
+		return "This book can't be edited"
 	var out := {}
-	if fields.has("title"):
+	if fields.has("title") and "title" in allowed:
 		var t := str(fields.title).strip_edges()
 		if t == "":
 			return "The title can't be empty"
 		out.title = t
 	for f in ["author", "synopsis"]:
-		if fields.has(f):
+		if fields.has(f) and f in allowed:
 			out[f] = str(fields[f]).strip_edges()
-	if fields.has("tags"):
+	if fields.has("tags") and "tags" in allowed:
 		out.tags = clean_tags(fields.tags)
+		if not is_file_book(b) and out.tags != b.get("tags", []):
+			out.tags_set = true
 	sync_key(b)  # assigned from the title, so fix it before that changes
 	update_book(id, out)
 	return ""
@@ -573,10 +588,10 @@ func _alias_map() -> Dictionary:
 
 
 ## The tags the Tag picker offers for a book: its own, or what its plugin picks
-## (SourcePlugin.library_tags).
+## (SourcePlugin.library_tags) unless the reader set the book's tags by hand.
 func picker_tags(book: Dictionary) -> Array:
 	var p := Plugins.get_plugin(str(book.get("source", "")))
-	return p.library_tags(book) if p else book.get("tags", [])
+	return p.library_tags(book) if p and not book.get("tags_set", false) else book.get("tags", [])
 
 
 ## Every tag the Tag picker offers, each replaced by its main tag (see

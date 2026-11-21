@@ -724,6 +724,7 @@ func _create_book(key: String, e: Dictionary, entries: Array) -> Dictionary:
 		"sync_key": key, "title": e.get("title", "Untitled"), "author": e.get("author", ""),
 		"kind": e.get("kind", "web"), "source": e.get("source", "web"), "url": e.get("url", ""),
 		"cover_url": e.get("cover_url", ""), "synopsis": e.get("synopsis", ""), "tags": e.get("tags", []),
+		"tags_set": bool(e.get("tags_set", false)),
 		"extra": e.get("extra", {}), "rss_only": e.get("rss_only", false), "chapters": chapters,
 		"total_words": SyncMerge.to_int(e.get("total_words", 0)), "dropped": bool(e.get("dropped", false)),
 		"archived": bool(e.get("archived", false)), "favorite": bool(e.get("favorite", false)),
@@ -835,7 +836,7 @@ func _missing_doc() -> Dictionary:
 func _book_file(b: Dictionary, flags: String) -> Dictionary:
 	var out := {
 		"key": Library.sync_key(b), "title": b.title, "author": b.author, "kind": b.kind, "source": b.source,
-		"url": b.url, "cover_url": b.cover_url, "synopsis": b.synopsis, "tags": b.tags, "extra": b.get("extra", {}),
+		"url": b.url, "cover_url": b.cover_url, "synopsis": b.synopsis, "tags": b.tags, "tags_set": b.get("tags_set", false), "extra": b.get("extra", {}),
 		"rss_only": b.get("rss_only", false), "added": b.added, "last_checked": b.last_checked,
 		"chapters": SyncMerge.clean_chapters(b.chapters),
 		"cover": _cover_names.get(b.id, ""), "cover_set": b.get("cover_set", 0), "on_server": flags,
