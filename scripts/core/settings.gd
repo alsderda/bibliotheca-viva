@@ -35,6 +35,7 @@ const DEFAULTS := {
 	"library_sort_desc": true,      # see BookSort.default_descending
 	"updates_hide_read": false,     # Updates → Latest leaves out chapters already read
 	"updates_hide_caught_up": false, # Updates → Following leaves out serials with no unread chapters
+	"contents_group_size": 50,  # chapters per Contents group when a serial's books can't be told from its titles (see BookGroups)
 	"web_home": "https://duckduckgo.com/",
 	"web_last_url": "",
 	"web_auto_next": true,          # continue to the next chapter page when listening

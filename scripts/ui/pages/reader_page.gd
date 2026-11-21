@@ -36,6 +36,8 @@ var _player_edge := false  # true while the player is a full-width strip (screen
 var _rate_btn: Button
 var _contents_view: Control
 var _contents_list: VBoxContainer
+var _open_groups := {}  # start index -> true for each expanded Contents group
+var _contents_book := "" # book id `_open_groups` belongs to
 var _details_view: Control
 var _bookmarks_view: Control
 var _bookmarks_list: VBoxContainer
@@ -740,28 +742,101 @@ func _build_contents() -> void:
 		check.tooltip_text = "Check for new chapters"
 		head.add_child(check)
 	_contents_list.add_child(UI.margin(head, 6 if compact else 12, 0, 6 if compact else 12, 12))
-	for i in book.chapters.size():
-		var ch: Dictionary = book.chapters[i]
-		var b := Button.new()
-		b.focus_mode = Control.FOCUS_NONE
-		b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-		b.custom_minimum_size.y = 44
-		var current_ch: bool = i == chapter
-		var pad := Vector4(14, 10, 14, 10)
-		b.add_theme_stylebox_override("normal", UiTheme.box(UiTheme.ACCENT_DIM if current_ch else Color.TRANSPARENT, 8, Color.TRANSPARENT, 0, pad))
-		b.add_theme_stylebox_override("hover", UiTheme.box(UiTheme.SURFACE_2, 8, Color.TRANSPARENT, 0, pad))
-		b.add_theme_stylebox_override("pressed", UiTheme.box(UiTheme.SURFACE_3, 8, Color.TRANSPARENT, 0, pad))
-		b.add_theme_color_override("font_color", UiTheme.TEXT if (current_ch or i > book.progress.chapter or book.last_read == 0) else UiTheme.MUTED)
-		b.text = "%d.   %s" % [i + 1, ch.title]
-		if book.kind == "web":
-			var have := Library.has_chapter(book.id, i)
-			b.icon = Icons.get_icon("check" if have else "download", UiTheme.GOOD if have else UiTheme.FAINT, 16)
-			b.icon_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-			b.tooltip_text = "Downloaded" if have else "Not downloaded yet"
-		b.pressed.connect(func(): go_to_chapter(i); main.pages.reader.select_tab(0); header_changed.emit())
-		_contents_list.add_child(b)
+	if book.get("id", "") != _contents_book:
+		_contents_book = book.get("id", "")
+		_open_groups.clear()
+	var titles := PackedStringArray()
+	for ch in book.chapters:
+		titles.append(ch.title)
+	var groups := BookGroups.split(titles, int(Settings.get_value("contents_group_size")))
+	if groups.is_empty():
+		for i in book.chapters.size():
+			_contents_list.add_child(_chapter_button(i))
+		return
+	for g in groups:
+		if int(g.start) <= chapter and chapter < int(g.end):
+			_open_groups[int(g.start)] = true
+	for g in groups:
+		var box := UI.vbox(2)
+		if _open_groups.has(int(g.start)):
+			_fill_group(box, int(g.start), int(g.end))
+		else:
+			box.hide()
+		_contents_list.add_child(_group_header(g, box))
+		_contents_list.add_child(box)
+
+
+## One Contents chapter row: the title, muted once read, with a download badge for web books.
+func _chapter_button(i: int) -> Button:
+	var ch: Dictionary = book.chapters[i]
+	var b := Button.new()
+	b.focus_mode = Control.FOCUS_NONE
+	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	b.custom_minimum_size.y = 44
+	var current_ch: bool = i == chapter
+	var pad := Vector4(14, 10, 14, 10)
+	b.add_theme_stylebox_override("normal", UiTheme.box(UiTheme.ACCENT_DIM if current_ch else Color.TRANSPARENT, 8, Color.TRANSPARENT, 0, pad))
+	b.add_theme_stylebox_override("hover", UiTheme.box(UiTheme.SURFACE_2, 8, Color.TRANSPARENT, 0, pad))
+	b.add_theme_stylebox_override("pressed", UiTheme.box(UiTheme.SURFACE_3, 8, Color.TRANSPARENT, 0, pad))
+	b.add_theme_color_override("font_color", UiTheme.TEXT if (current_ch or i > book.progress.chapter or book.last_read == 0) else UiTheme.MUTED)
+	b.text = "%d.   %s" % [i + 1, ch.title]
+	if book.kind == "web":
+		var have := Library.has_chapter(book.id, i)
+		b.icon = Icons.get_icon("check" if have else "download", UiTheme.GOOD if have else UiTheme.FAINT, 16)
+		b.icon_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		b.tooltip_text = "Downloaded" if have else "Not downloaded yet"
+	b.pressed.connect(func(): go_to_chapter(i); main.pages.reader.select_tab(0); header_changed.emit())
+	return b
+
+
+## A Contents group header: the group's label and chapter count, with a chevron
+## showing whether its chapter list (built lazily) is expanded.
+func _group_header(g: Dictionary, box: VBoxContainer) -> Button:
+	var start := int(g.start)
+	var end := int(g.end)
+	var n := end - start
+	var b := Button.new()
+	b.set_meta("group_start", start)
+	b.focus_mode = Control.FOCUS_NONE
+	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	b.custom_minimum_size.y = 44
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var pad := Vector4(14, 10, 14, 10)
+	b.add_theme_stylebox_override("normal", UiTheme.box(UiTheme.SURFACE, 8, Color.TRANSPARENT, 0, pad))
+	b.add_theme_stylebox_override("hover", UiTheme.box(UiTheme.SURFACE_2, 8, Color.TRANSPARENT, 0, pad))
+	b.add_theme_stylebox_override("pressed", UiTheme.box(UiTheme.SURFACE_3, 8, Color.TRANSPARENT, 0, pad))
+	b.add_theme_font_override("font", UiTheme.sans_semibold)
+	b.add_theme_color_override("font_color", UiTheme.TEXT)
+	b.text = "%s  ·  %d %s" % [g.label, n, "chapter" if n == 1 else "chapters"]
+	b.icon = Icons.get_icon("chev_down" if _open_groups.has(start) else "chev_right", UiTheme.MUTED, 18)
+	b.pressed.connect(func(): _toggle_group(b, box, start, end))
+	return b
+
+
+## Opens or closes a Contents group in place, so the list keeps its scroll position.
+func _toggle_group(header: Button, box: VBoxContainer, start: int, end: int) -> void:
+	if _open_groups.has(start):
+		_open_groups.erase(start)
+		box.hide()
+		header.icon = Icons.get_icon("chev_right", UiTheme.MUTED, 18)
+	else:
+		_open_groups[start] = true
+		_fill_group(box, start, end)
+		box.show()
+		header.icon = Icons.get_icon("chev_down", UiTheme.MUTED, 18)
+
+
+## Builds a group's chapter rows the first time it is shown, so opening
+## Contents stays fast even with thousands of chapters.
+func _fill_group(box: VBoxContainer, start: int, end: int) -> void:
+	if box.get_child_count() > 0:
+		return
+	for i in range(start, end):
+		box.add_child(_chapter_button(i))
 
 
 # --- bookmarks ---------------------------------------------------------------
@@ -1303,6 +1378,11 @@ func _on_setting(key: String) -> void:
 			_render()
 	elif key == "tts_rate":
 		_update_player()
+	elif key == "contents_group_size":
+		# Open groups are keyed by their first chapter, which no longer lines up.
+		_open_groups.clear()
+		if not book.is_empty() and _contents_view.visible:
+			_build_contents()
 
 
 func _apply_style() -> void:

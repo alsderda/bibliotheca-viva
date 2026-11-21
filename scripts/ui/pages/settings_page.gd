@@ -239,6 +239,9 @@ func _reading() -> void:
 	_section("Library", [
 		_row("Cover size", "Size of the book covers in the Library. They stretch a little so each row fills the width.", _segmented("library_cover_size", [["large", "150%"], ["normal", "100%"], ["small", "67%"], ["smallest", "50%"]])),
 	])
+	_section("Contents", [
+		_row("Chapters per group", "Long chapter lists are split into collapsible groups. When the chapter titles show where each book starts, the groups follow the books; otherwise each group has this many chapters.", _slider("contents_group_size", 10, 500, 10, "%d")),
+	])
 
 
 ## Shows the sample paragraphs as the reader would.
