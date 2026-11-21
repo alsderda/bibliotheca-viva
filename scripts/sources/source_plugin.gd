@@ -11,6 +11,7 @@ extends RefCounted
 ##                  `words` is optional: the book's length as the site reports it. Shown next to the count of the saved chapters.
 ##                  `extra` is optional: anything the plugin wants kept on the book (e.g. {"status": "completed"}),
 ##                  stored as the book's `extra` and refreshed on each check. Library filters read it.
+##   fetch_latest -> {chapters: [{title, url, date, excerpt_html?}], error, blocked}   ({} = not supported)
 ##   fetch_chapter -> {title, paragraphs, error}   (error "blocked" for a bot check)
 
 ## The plugin's status changed (see status()).
@@ -78,6 +79,15 @@ func search_url(_query: String) -> String:
 
 func fetch_novel(_url: String) -> Dictionary:
 	return {"error": "%s can't add books by link." % name}
+
+
+## The book's newest chapters, for a quick update check, from something cheaper than
+## the page fetch_novel reads (e.g. a feed). {} = the plugin has no such list (default).
+## -> {chapters: [{title, url, date, excerpt_html?}], error, blocked}
+## Chapters oldest first, like fetch_novel. A short list is fine: the app checks
+## whether it reaches back to chapters the book already has (see Sources._refresh).
+func fetch_latest(_url: String) -> Dictionary:
+	return {}
 
 
 ## `book` is the library book, `chapter` its {title, url}, `index` its position.

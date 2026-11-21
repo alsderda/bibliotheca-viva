@@ -13,6 +13,8 @@ extends Node
 ##   url, cover (path or ""), cover_set (unix time the cover was picked by hand, else 0), cover_url, synopsis, tags, tags_set (true once the reader changed a plugin book's tags by hand, see picker_tags), rss_only, extra (the plugin's own data, see SourcePlugin),
 ##   total_words (the book's length as the site reports it, 0 if unknown),
 ##   chapters: [{title, url, date, words}] (words: set once the chapter's full text is saved), progress: {chapter, paragraph}, added, last_read, last_checked,
+##   last_full_check (unix time of the last update check that read the book's full chapter list, 0 = never; see Sources._refresh),
+##   possible_gap (true: a quick update check found new chapters but couldn't tell whether some in between were missed),
 ##   modified (last local change to anything but progress and bookmarks), sync_key (see Sync),
 ##   text_stamp (unix time chapter text was last saved or moved, see Sync),
 ##   dropped (true: the reader gave up on it; cleared when it's opened again, see set_dropped),
@@ -148,6 +150,7 @@ func add_book(data: Dictionary) -> Dictionary:
 		"url": "", "cover": "", "cover_set": 0, "cover_url": "", "synopsis": "", "tags": [], "tags_set": false, "extra": {}, "rss_only": false,
 		"total_words": 0, "chapters": [], "progress": {"chapter": 0, "paragraph": 0},
 		"added": Time.get_unix_time_from_system(), "last_read": 0, "last_checked": 0,
+		"last_full_check": 0, "possible_gap": false,
 		"modified": Time.get_unix_time_from_system(),
 	}
 	book.merge(data, true)

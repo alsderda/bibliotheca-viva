@@ -729,6 +729,7 @@ func _create_book(key: String, e: Dictionary, entries: Array) -> Dictionary:
 		"total_words": SyncMerge.to_int(e.get("total_words", 0)), "dropped": bool(e.get("dropped", false)),
 		"archived": bool(e.get("archived", false)), "favorite": bool(e.get("favorite", false)),
 		"added": SyncMerge.num(e.get("added", 0)), "last_checked": SyncMerge.num(e.get("last_checked", 0)), "modified": SyncMerge.num(e.get("modified", 0)),
+		"last_full_check": SyncMerge.num(e.get("last_full_check", 0)), "possible_gap": bool(e.get("possible_gap", false)),
 	})
 
 
@@ -838,6 +839,7 @@ func _book_file(b: Dictionary, flags: String) -> Dictionary:
 		"key": Library.sync_key(b), "title": b.title, "author": b.author, "kind": b.kind, "source": b.source,
 		"url": b.url, "cover_url": b.cover_url, "synopsis": b.synopsis, "tags": b.tags, "tags_set": b.get("tags_set", false), "extra": b.get("extra", {}),
 		"rss_only": b.get("rss_only", false), "added": b.added, "last_checked": b.last_checked,
+		"last_full_check": b.get("last_full_check", 0), "possible_gap": b.get("possible_gap", false),
 		"chapters": SyncMerge.clean_chapters(b.chapters),
 		"cover": _cover_names.get(b.id, ""), "cover_set": b.get("cover_set", 0), "on_server": flags,
 		"bookmarks": b.get("bookmarks", []).map(func(m):
