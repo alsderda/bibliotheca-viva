@@ -194,6 +194,40 @@ func run(t: Node) -> void:
 				and (boxes[cur] as Control).visible, true)
 			(headers[other] as Button).pressed.emit()
 			t.check("toggling again collapses the group", not box.visible, true)
+
+	# Touch selection bar: placement, actions and hiding.
+	var bar := SelectionBar.new()
+	t.add_child(bar)
+	var bounds := Rect2(0, 0, 400, 800)
+	bar.show_at(Vector2(200, 400), bounds, ReaderPage._selection_actions(true, false))
+	t.check("selection bar opens above the anchor when there is room",
+		bar.visible and bar.position.y + bar.size.y <= 400, true)
+	t.check("selection bar stays inside bounds",
+		bounds.encloses(Rect2(bar.position, bar.size)), true)
+	bar.show_at(Vector2(200, 10), bounds, ReaderPage._selection_actions(true, false))
+	t.check("selection bar opens below the anchor at the top edge", bar.position.y > 10, true)
+	t.check("selection bar stays inside bounds at the top edge",
+		bounds.encloses(Rect2(bar.position, bar.size)), true)
+	var ids := ReaderPage._selection_actions(true, false).map(func(a): return a.id)
+	t.check("selection actions are copy, bookmark and more",
+		ids == [ReaderPage.SEL_COPY, ReaderPage.SEL_BOOKMARK, ReaderPage.SEL_MORE], true)
+	var plain_ids := ReaderPage._selection_actions(false, false).map(func(a): return a.id)
+	t.check("no-selection actions are bookmark and copy paragraph",
+		plain_ids == [ReaderPage.SEL_BOOKMARK, ReaderPage.SEL_COPY_PARA], true)
+	var marked: Dictionary = ReaderPage._selection_actions(true, true)[1]
+	t.check("bookmarked paragraph offers editing",
+		marked.text == "Edit bookmark" and marked.icon == "bookmark_fill", true)
+	var fresh: Dictionary = ReaderPage._selection_actions(true, false)[1]
+	t.check("plain paragraph offers bookmarking",
+		fresh.text == "Bookmark" and fresh.icon == "bookmark", true)
+	# A long press with no selection still pops the bar up (bookmark path).
+	page._show_selection_bar(Vector2(20, 100))
+	t.check("long press shows the bar without a selection", page._sel_bar.visible, true)
+	t.check("long press without a selection offers bookmarking",
+		page._sel_bar._row.get_child_count() == 2, true)
+	page._on_scrolled(0.0)
+	t.check("scrolling hides the selection bar", page._sel_bar.visible, false)
+	bar.queue_free()
 	contents.queue_free()
 	page.queue_free()
 	await t.get_tree().process_frame
