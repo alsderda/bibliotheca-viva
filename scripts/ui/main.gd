@@ -140,6 +140,8 @@ func _ready() -> void:
 	if Array(OS.get_cmdline_user_args()).any(func(a): return a.begins_with("--zzshot=")): add_child(load("res://scripts/dev/zz_shot.gd").new())
 	if "--selftest" in OS.get_cmdline_user_args():
 		add_child(load("res://scripts/dev/selftest.gd").new())
+	if "--followcheck" in OS.get_cmdline_user_args() or "--followshots" in OS.get_cmdline_user_args():
+		add_child(load("res://scripts/dev/follow_check.gd").new())
 	if Array(OS.get_cmdline_user_args()).any(func(a): return a.begins_with("--plugintest=")):
 		add_child(load("res://scripts/dev/plugintest.gd").new())
 	if Array(OS.get_cmdline_user_args()).any(func(a): return a.begins_with("--synctest=")):
