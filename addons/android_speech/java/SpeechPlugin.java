@@ -29,6 +29,7 @@ public class SpeechPlugin extends GodotPlugin implements SpeechPlayer.Listener {
 	public Set<SignalInfo> getPluginSignals() {
 		Set<SignalInfo> signals = new HashSet<>();
 		signals.add(new SignalInfo("chunk_started", Integer.class, Integer.class));
+		signals.add(new SignalInfo("word_range", Integer.class, Integer.class, Integer.class, Integer.class));
 		signals.add(new SignalInfo("state_changed", Integer.class, Boolean.class, Boolean.class));
 		signals.add(new SignalInfo("finished", Integer.class));
 		signals.add(new SignalInfo("sleep_stopped", Integer.class));
@@ -97,6 +98,11 @@ public class SpeechPlugin extends GodotPlugin implements SpeechPlayer.Listener {
 	@Override
 	public void chunkStarted(int session, int index) {
 		emitSignal("chunk_started", session, index);
+	}
+
+	@Override
+	public void wordRange(int session, int index, int start, int end) {
+		emitSignal("word_range", session, index, start, end);
 	}
 
 	@Override

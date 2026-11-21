@@ -11,12 +11,17 @@ var _items: Array = []           # [{kind, bb, tts}] one per RichTextLabel parag
 var _data := {}                  # raw chapter data, kept so rules can be re-applied
 var _load_token := 0
 var _loading := false            # a chapter load is in flight
-var _bb_cache := PackedStringArray()  # finished BBCode per item, reused between highlight changes
+var _bb_cache := PackedStringArray()  # finished plain BBCode per item, exactly what the main label shows
+var _hl_queued := false         # an overlay re-line-up is waiting for the end of the frame
+var _hl_clip: Control           # clips the overlay to the lines the text itself draws
+var _hl_label: RichTextLabel  # draws the highlighted paragraph over the main label, so the chapter text is never re-parsed for a highlight
 var _big := {}                   # item indexes rendered title-size (first title/heading)
 var _listen_shown := false       # whether the header's Listen button currently shows "Stop"
 var _excerpt := false
 var _restoring := false
 var _save_timer: Timer
+var _scroll_tween: Tween        # the follow scroll in flight, so a new one can replace it
+var _scroll_target := 0.0       # where that scroll ends
 
 var _bg: ColorRect
 var _read_view: Control
@@ -208,6 +213,7 @@ func _load_chapter(paragraph: int) -> void:
 	_items.clear()  # so nothing re-renders the previous chapter while this one loads or fails
 	_data = {}
 	_text.text = ""
+	_show_highlight()  # the old highlight must not linger over the loading text
 	_banner.hide()
 	_set_status("Loading chapter…")
 	header_changed.emit()
@@ -300,12 +306,14 @@ func _render_ctx() -> Dictionary:
 	}
 
 
-## The finished BBCode of item `i`: highlight, search mark, indent, bookmark icon,
-## title sizing. Pure in the items, the context and the highlight state.
-func _item_bbcode(i: int, ctx: Dictionary) -> String:
+## The finished BBCode of item `i`: search mark, indent, bookmark icon, title
+## sizing, and the highlight when `with_hl`. Pure in the items, the context and
+## the highlight state. The main label always uses the plain form; only the
+## highlight overlay uses the highlighted form.
+func _item_bbcode(i: int, ctx: Dictionary, with_hl: bool) -> String:
 	var it: Dictionary = _items[i]
 	var bb: String = it.bb
-	if i == tts.highlight:
+	if with_hl and i == tts.highlight:
 		bb = _highlighted(it, String(ctx.hl), ctx.colors)
 	elif i == _find.get("paragraph", -1):
 		bb = _mark_span(bb, _find.from, _find.to, "[bgcolor=%s]" % Color(UiTheme.WARN, 0.4).to_html(), "[/bgcolor]")
@@ -331,8 +339,9 @@ func _render() -> void:
 		if it.kind == "title" or (it.kind == "heading" and first_heading):
 			_big[i] = true
 			first_heading = false
-		_bb_cache.append(_item_bbcode(i, ctx))
+		_bb_cache.append(_item_bbcode(i, ctx, false))
 	_assign_text()
+	_show_highlight()
 
 
 func _assign_text() -> void:
@@ -341,22 +350,80 @@ func _assign_text() -> void:
 	_text.get_v_scroll_bar().value = v
 
 
-## Rebuilds only the old and new highlighted paragraphs after a highlight change;
-## the rest of the cached chapter text is reused as-is. The scroll position is kept.
+## Moves the highlight without touching the chapter text: the main label keeps
+## showing the plain paragraphs, so its layout and scroll position stay exactly
+## where they are (a running smooth scroll is never disturbed). Only the small
+## overlay re-parses, for one paragraph.
 func refresh_highlight(old: int, new: int) -> void:
 	if _bb_cache.size() != _items.size():
 		_render()
 		return
-	var ctx := _render_ctx()
-	var changed := false
-	for i in [old, new]:
-		if i >= 0 and i < _items.size():
-			var bb := _item_bbcode(i, ctx)
-			if bb != _bb_cache[i]:
-				_bb_cache[i] = bb
-				changed = true
-	if changed:  # e.g. with highlighting switched off, nothing differs
-		_assign_text()
+	_show_highlight()
+
+
+## Shows the spoken paragraph in the highlight overlay, lined up over that same
+## paragraph in the main label. Hides the overlay when nothing is spoken or the
+## highlight style adds no tags, so identical text is never drawn twice.
+func _show_highlight() -> void:
+	if _hl_label == null or tts == null:
+		return
+	var i := tts.highlight
+	if i < 0 or i >= _items.size() or _bb_cache.size() != _items.size():
+		_hl_label.hide()
+		return
+	var bb := _item_bbcode(i, _render_ctx(), true)
+	if bb == _bb_cache[i]:
+		_hl_label.hide()
+		return
+	_hl_label.text = bb
+	_hl_label.show()
+	_position_highlight()
+
+
+## Re-lines the overlay up once, at the end of this frame. Never straight from a
+## scroll signal: the layout getters it uses can make the label re-lay itself out and
+## toggle its scrollbar, which changes the scroll value again and so re-enters the
+## signal without end.
+func _queue_position_highlight() -> void:
+	if not _hl_queued:
+		_hl_queued = true
+		_position_highlight.call_deferred()
+
+
+## Lines the overlay up with its paragraph: the same wrap width the main label
+## lays out at (the one-paragraph overlay never needs a scrollbar, so the main
+## bar's share comes off the width), shifted past the top margin and the scroll.
+func _position_highlight() -> void:
+	_hl_queued = true  # scroll signals the getters below set off must not queue another
+	_line_up_highlight()
+	_hl_queued = false
+
+
+func _line_up_highlight() -> void:
+	if _hl_label == null or not _hl_label.visible or tts == null:
+		return
+	if _text.size.x <= 0.0:
+		return
+	var i := tts.highlight
+	if i < 0 or i >= _items.size():
+		return
+	var bar := _text.get_v_scroll_bar()
+	var reserves := bar.size.x if bar.visible else 0.0
+	var top := _text.get_paragraph_offset(i)
+	var bottom := bar.max_value if i + 1 >= _items.size() else _text.get_paragraph_offset(i + 1)
+	var margin_top := _text.get_theme_stylebox("normal").content_margin_top
+	_hl_label.size = Vector2(maxf(_text.size.x - reserves, 1.0), maxf(bottom - top + 8.0, 8.0))
+	_hl_label.position = Vector2(0.0, margin_top + top - bar.value)
+	# The text draws no line that starts below its visible page (the rest of the
+	# bottom margin is left clear for the player), so the overlay stops there too.
+	var clip_bottom := _text.size.y
+	for k in _hl_label.get_line_count():
+		var line_top := top + _hl_label.get_line_offset(k)
+		if line_top >= bar.value + bar.page:
+			var pad := _hl_label.get_theme_constant("text_highlight_v_padding")  # a background mark reaches above its line
+			clip_bottom = minf(clip_bottom, margin_top + line_top - bar.value - pad)
+			break
+	_hl_clip.offset_bottom = clip_bottom - _hl_clip.get_parent_control().size.y
 
 
 ## An inline bookmark icon for the start of bookmarked paragraphs. [img] only takes
@@ -548,9 +615,40 @@ func _scroll_to(paragraph: int, smooth: bool) -> void:
 	var bar := _text.get_v_scroll_bar()
 	y = clampf(y, 0, bar.max_value)
 	if smooth:
-		create_tween().tween_property(bar, "value", y, 0.35).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		smooth_scroll_to(y)
 	else:
+		stop_smooth_scroll()
 		bar.value = y
+
+
+## Eases the text so content offset `y` (clamped) is at the top. A new call replaces
+## the one in flight and starts from wherever that got to, so follow scrolls never
+## fight each other.
+func smooth_scroll_to(y: float, duration := 0.35) -> void:
+	var bar := _text.get_v_scroll_bar()
+	y = clampf(y, 0, maxf(0, bar.max_value - bar.page))
+	stop_smooth_scroll()
+	if absf(bar.value - y) < 1:
+		return
+	_scroll_target = y
+	_scroll_tween = create_tween()
+	_scroll_tween.tween_property(bar, "value", y, duration).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+
+
+## Where the text is scrolled to, or is easing towards while a follow scroll runs.
+func scroll_target() -> float:
+	return _scroll_target if is_smooth_scrolling() else _text.get_v_scroll_bar().value
+
+
+func stop_smooth_scroll() -> void:
+	if _scroll_tween and _scroll_tween.is_valid():
+		_scroll_tween.kill()
+	_scroll_tween = null
+
+
+## Whether a follow scroll is still easing.
+func is_smooth_scrolling() -> bool:
+	return _scroll_tween != null and _scroll_tween.is_running()
 
 
 func _first_visible() -> int:
@@ -563,6 +661,7 @@ func _first_visible() -> int:
 
 func _on_scrolled(_v: float) -> void:
 	_update_footer()
+	_queue_position_highlight()
 	if not _restoring:
 		_save_timer.start()
 
@@ -628,7 +727,26 @@ func _build_read_view() -> void:
 	_text.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_text.get_v_scroll_bar().value_changed.connect(_on_scrolled)
 	_text.focus_mode = Control.FOCUS_CLICK
+	# The TTS highlight, drawn above the text and clipped to the same bounds. Not a
+	# child of the text: resizing a child makes a RichTextLabel lay out all of its
+	# text again, which fires its scroll signal, which moves the overlay again.
+	# It never takes input or shows its own bar.
+	_hl_clip = Control.new()
+	var hl_clip := _hl_clip
+	hl_clip.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hl_clip.clip_contents = true
+	hl_clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hl_label = RichTextLabel.new()
+	_hl_label.bbcode_enabled = true
+	_hl_label.scroll_active = false
+	_hl_label.selection_enabled = false
+	_hl_label.context_menu_enabled = false
+	_hl_label.focus_mode = Control.FOCUS_NONE
+	_hl_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hl_label.hide()
+	hl_clip.add_child(_hl_label)
 	stack.add_child(_text)
+	stack.add_child(hl_clip)
 
 	_status = UI.vbox(14)
 	_status.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -695,6 +813,9 @@ func _build_read_view() -> void:
 	mid.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_footer_label = UI.label("", "Small")
 	_footer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	# Its text changes while scrolling; on a narrow screen a width that followed it
+	# would resize the chapter text, whose re-layout moves the scroll, and so on.
+	_footer_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	mid.add_child(_footer_label)
 	_footer_bar = UI.progress(0, 3)
 	mid.add_child(_footer_bar)
@@ -1394,19 +1515,22 @@ func _apply_style() -> void:
 	_bg.color = c.bg
 	var serif: bool = Settings.get_value("reader_font") == "serif"
 	var size := int(Settings.get_value("font_size"))
-	_text.add_theme_font_override("normal_font", UiTheme.serif if serif else UiTheme.sans)
-	_text.add_theme_font_override("bold_font", UiTheme.serif_bold if serif else UiTheme.sans_bold)
-	_text.add_theme_font_override("italics_font", UiTheme.serif_italic if serif else UiTheme.sans)
-	_text.add_theme_font_override("bold_italics_font", UiTheme.serif_bold if serif else UiTheme.sans_bold)
-	for k in ["normal_font_size", "bold_font_size", "italics_font_size", "bold_italics_font_size"]:
-		_text.add_theme_font_size_override(k, size)
-	_text.add_theme_color_override("default_color", c.text)
-	_text.add_theme_color_override("selection_color", Color(UiTheme.ACCENT, 0.3))
-	_text.add_theme_constant_override("line_separation", int(Settings.get_value("line_spacing")) + int(size * 0.2))
-	_text.add_theme_constant_override("paragraph_separation", int(Settings.get_value("paragraph_gap")))
-	apply_alignment(_text)
-	_text.add_theme_constant_override("text_highlight_h_padding", 6)
-	_text.add_theme_constant_override("text_highlight_v_padding", 3)
+	# The highlight overlay renders one paragraph of the same text, so it gets
+	# every layout-affecting override the main label gets.
+	for rt: RichTextLabel in [_text, _hl_label]:
+		rt.add_theme_font_override("normal_font", UiTheme.serif if serif else UiTheme.sans)
+		rt.add_theme_font_override("bold_font", UiTheme.serif_bold if serif else UiTheme.sans_bold)
+		rt.add_theme_font_override("italics_font", UiTheme.serif_italic if serif else UiTheme.sans)
+		rt.add_theme_font_override("bold_italics_font", UiTheme.serif_bold if serif else UiTheme.sans_bold)
+		for k in ["normal_font_size", "bold_font_size", "italics_font_size", "bold_italics_font_size"]:
+			rt.add_theme_font_size_override(k, size)
+		rt.add_theme_color_override("default_color", c.text)
+		rt.add_theme_color_override("selection_color", Color(UiTheme.ACCENT, 0.3))
+		rt.add_theme_constant_override("line_separation", int(Settings.get_value("line_spacing")) + int(size * 0.2))
+		rt.add_theme_constant_override("paragraph_separation", int(Settings.get_value("paragraph_gap")))
+		apply_alignment(rt)
+		rt.add_theme_constant_override("text_highlight_h_padding", 6)
+		rt.add_theme_constant_override("text_highlight_v_padding", 3)
 	var dark: bool = c.bg.get_luminance() < 0.5
 	var sb := _text.get_v_scroll_bar()
 	sb.add_theme_stylebox_override("grabber", UiTheme.box(Color(1, 1, 1, 0.10) if dark else Color(0, 0, 0, 0.14), 4))
@@ -1450,6 +1574,14 @@ func _apply_layout() -> void:
 	style.content_margin_bottom = 120 if _player.visible else style.content_margin_top
 	_text.add_theme_stylebox_override("normal", style)
 	_text.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	# Same side margins, so the text starts at the same x; no top or bottom margin, as
+	# _position_highlight() places the overlay's top on the paragraph's first line.
+	var hl_style: StyleBoxEmpty = style.duplicate()
+	hl_style.content_margin_top = 0
+	hl_style.content_margin_bottom = 0
+	_hl_label.add_theme_stylebox_override("normal", hl_style)
+	_hl_label.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	_queue_position_highlight()  # margins or width changed
 	_player.custom_minimum_size.x = 0 if compact else 520
 	_player_info.visible = not compact
 	# On a phone the bar has no room to spare: a countdown beside the moon pushes the

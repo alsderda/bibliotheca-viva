@@ -39,6 +39,7 @@ import android.speech.tts.UtteranceProgressListener;
 final class SpeechPlayer {
 	interface Listener {
 		void chunkStarted(int session, int index);
+		void wordRange(int session, int index, int start, int end);
 		void stateChanged(int session, boolean playing, boolean paused);
 		void finished(int session);
 		void sleepStopped(int session);
@@ -125,6 +126,13 @@ final class SpeechPlayer {
 			@Override
 			public void onError(String id) {
 				MAIN.post(() -> onUtterance(id, true));  // skip it rather than stall
+			}
+
+			// Called with each range the engine speaks (API 26+; older systems never
+			// call it, so no version check is needed). Only some engines send ranges.
+			@Override
+			public void onRangeStart(String id, int start, int end, int frame) {
+				MAIN.post(() -> onRange(id, start, end));
 			}
 		});
 
@@ -336,6 +344,19 @@ final class SpeechPlayer {
 			return;
 		}
 		fill();
+	}
+
+	/** Forwards a spoken range, so the reader can follow along word by word. */
+	private void onRange(String id, int start, int end) {
+		String[] parts = id.split(":");
+		if (parts.length != 2 || Integer.parseInt(parts[0]) != epoch || !playing || paused) {
+			return;  // stale, or a silence
+		}
+		int i = Integer.parseInt(parts[1]);
+		if (i != pos) {
+			return;  // a seek moved on before this range arrived
+		}
+		listener.wordRange(session, i, start, end);
 	}
 
 	/** Drops whatever the engine still has queued; playback continues from `pos`. */

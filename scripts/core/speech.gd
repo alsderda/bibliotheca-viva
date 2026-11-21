@@ -17,6 +17,11 @@ signal state_changed(playing: bool)
 signal paragraph_started(index: int)
 ## A new utterance of paragraph `paragraph` started: its sentence number in sentence mode.
 signal sentence_started(paragraph: int, sentence: int)
+## The voice reached `char_pos` (a character offset within the paragraph's spoken
+## text, i.e. `text` with the chunks of split() laid end to end) of `paragraph`.
+## Desktop text-to-speech reports per-word positions; on Android the speech plugin
+## forwards the engine's range starts, and where neither is available nothing is
+## emitted and the reader falls back to chunk starts plus a time estimate.
 signal word_boundary(paragraph: int, char_pos: int)
 signal reached_end
 signal sleep_triggered
@@ -84,6 +89,7 @@ func _ready() -> void:
 	if Engine.has_singleton("BibliothecaVivaSpeech"):
 		_droid = Engine.get_singleton("BibliothecaVivaSpeech")
 		_droid.connect("chunk_started", _on_droid_chunk)
+		_droid.connect("word_range", _on_droid_range)
 		_droid.connect("state_changed", _on_droid_state)
 		_droid.connect("finished", _on_droid_finished)
 		_droid.connect("sleep_stopped", _on_droid_sleep)
@@ -552,8 +558,34 @@ func _on_canceled(id: int) -> void:
 
 
 func _on_boundary(pos: int, id: int) -> void:
-	if id == _active_id:
-		word_boundary.emit(current, pos)
+	if id != _active_id or current < 0 or current >= items.size():
+		return
+	var c := para_char(str(items[current].text), _chunks, _chunk, pos)
+	if c != -1:
+		word_boundary.emit(current, c)
+
+
+## Start of chunk `chunk` within the paragraph's spoken `text`, or -1 when the
+## chunk text can't be found there.
+static func chunk_offset(text: String, chunks: PackedStringArray, chunk: int) -> int:
+	if chunk < 0 or chunk >= chunks.size():
+		return -1
+	var from := 0
+	for k in chunk:
+		var start := text.find(chunks[k], from)
+		if start == -1:
+			return -1
+		from = start + chunks[k].length()
+	return text.find(chunks[chunk], from)
+
+
+## `pos` characters into chunk `chunk` as an offset within the paragraph's spoken
+## text, clamped to its length, or -1 when the chunk can't be located.
+static func para_char(text: String, chunks: PackedStringArray, chunk: int, pos: int) -> int:
+	var off := chunk_offset(text, chunks, chunk)
+	if off == -1:
+		return -1
+	return mini(off + maxi(pos, 0), text.length())
 
 
 ## Low-processor mode sleeps between frames, which stretches short timers by tens of ms;
@@ -721,6 +753,23 @@ func _on_droid_chunk(session: int, index: int) -> void:
 	if _pending == -1:
 		_droid_sync.call_deferred()
 	_pending = index
+
+
+## The engine is about to speak characters `start`..`end` of utterance `index`.
+## Maps into the paragraph like a desktop word boundary; ranges for an utterance
+## the reader has moved past (a seek landed elsewhere first) are ignored.
+func _on_droid_range(session: int, index: int, start: int, _end: int) -> void:
+	if session != _session or not playing or index < 0 or index >= _flat.size():
+		return
+	if index != _pos and index != _pending:
+		return
+	var entry: Array = _flat[index]
+	if entry[0] != _base and index != _pos:
+		return  # the new chapter isn't current yet; its chunk start will sync it
+	var item: Dictionary = _chapters[entry[0]][entry[1]]
+	var c := para_char(str(item.text), _split(item), entry[2], start)
+	if c != -1:
+		word_boundary.emit(entry[1], c)
 
 
 ## Paused, resumed or stopped, possibly from the notification or by another app taking over audio.
