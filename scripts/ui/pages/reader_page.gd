@@ -970,9 +970,12 @@ func _build_details() -> void:
 	buttons.add_theme_constant_override("h_separation", 10)
 	buttons.add_theme_constant_override("v_separation", 10)
 	buttons.add_child(UI.button("Read", "book", "PrimaryButton", func(): main.pages.reader.select_tab(0); header_changed.emit()))
-	if Library.is_file_book(book):
+	if not Library.editable_fields(book).is_empty():
 		var edit := UI.button("Edit details", "pencil", "", _edit_details)
-		edit.tooltip_text = "Change the title, author, tags and description"
+		if Library.is_file_book(book):
+			edit.tooltip_text = "Change the title, author, tags and description"
+		else:
+			edit.tooltip_text = "Change the title and tags shown for this book"
 		buttons.add_child(edit)
 	var change := UI.button("Change cover", "image", "", _pick_cover)
 	change.tooltip_text = "Use an image file (PNG, JPEG or WebP) as this book's cover"

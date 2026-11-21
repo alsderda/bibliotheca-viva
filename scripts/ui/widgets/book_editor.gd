@@ -1,6 +1,8 @@
 class_name BookEditor
 extends Control
-## Modal editor for an imported book's title, author, tags and description.
+## Modal editor for a book's details: title, author, tags and description for an
+## imported book, title and tags for a web book (its author and description
+## come from the site and can't be changed here).
 ## Usage: BookEditor.open(main, book_id, then)  (then is called after saving)
 
 signal closed
@@ -54,22 +56,29 @@ func _build(book: Dictionary) -> void:
 	_scroll = UI.scroll(_body)
 	col.add_child(_scroll)
 
+	var editable := Library.editable_fields(book)
 	_title = _field(_body, "Title", book.get("title", ""), "Book title")
-	_author = _field(_body, "Author", book.get("author", ""), "Unknown")
+	if "author" in editable:
+		_author = _field(_body, "Author", book.get("author", ""), "Unknown")
 	_tags = _field(_body, "Tags", ", ".join(PackedStringArray(book.get("tags", []))), "Separate tags with commas, e.g. Fantasy, Finished")
 	_suggest = TagSuggest.attach(_tags, func(): return [Library.book_tags(), []])
 	_suggest.refreshed.connect(_fit, CONNECT_DEFERRED)
 	_body.add_child(_suggest)
 
-	_body.add_child(UI.label("DESCRIPTION", "Overline"))
-	_synopsis = TextEdit.new()
-	_synopsis.text = book.get("synopsis", "")
-	_synopsis.custom_minimum_size.y = 120 if get_viewport_rect().size.y > 640 else 72
-	_synopsis.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
-	_synopsis.add_theme_stylebox_override("normal", UiTheme.box(UiTheme.SURFACE, 8, UiTheme.BORDER, 1, Vector4(10, 8, 10, 8)))
-	_synopsis.add_theme_stylebox_override("focus", UiTheme.box(UiTheme.SURFACE, 8, UiTheme.ACCENT, 1, Vector4(10, 8, 10, 8)))
-	_synopsis.add_theme_color_override("font_color", UiTheme.TEXT)
-	_body.add_child(_synopsis)
+	if "synopsis" in editable:
+		_body.add_child(UI.label("DESCRIPTION", "Overline"))
+		_synopsis = TextEdit.new()
+		_synopsis.text = book.get("synopsis", "")
+		_synopsis.custom_minimum_size.y = 120 if get_viewport_rect().size.y > 640 else 72
+		_synopsis.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+		_synopsis.add_theme_stylebox_override("normal", UiTheme.box(UiTheme.SURFACE, 8, UiTheme.BORDER, 1, Vector4(10, 8, 10, 8)))
+		_synopsis.add_theme_stylebox_override("focus", UiTheme.box(UiTheme.SURFACE, 8, UiTheme.ACCENT, 1, Vector4(10, 8, 10, 8)))
+		_synopsis.add_theme_color_override("font_color", UiTheme.TEXT)
+		_body.add_child(_synopsis)
+	else:
+		var hint := UI.label("The author and description come from the site.", "Small", true)
+		hint.add_theme_color_override("font_color", UiTheme.MUTED)
+		_body.add_child(hint)
 	_suggest.refresh()
 
 	_status = UI.label("", "Small", true)
@@ -103,9 +112,12 @@ func _field(col: VBoxContainer, label: String, value: String, placeholder: Strin
 
 
 func _save() -> void:
-	var err := Library.edit_details(book_id, {
-		"title": _title.text, "author": _author.text, "tags": _tags.text, "synopsis": _synopsis.text,
-	})
+	var fields := {"title": _title.text, "tags": _tags.text}
+	if _author != null:
+		fields["author"] = _author.text
+	if _synopsis != null:
+		fields["synopsis"] = _synopsis.text
+	var err := Library.edit_details(book_id, fields)
 	if err != "":
 		_status.text = err
 		_status.visible = true

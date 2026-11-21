@@ -574,7 +574,7 @@ func _show_menu(id: String, at: Vector2) -> void:
 	var archived := Library.is_archived(book)
 	_menu.set_item_disabled(_menu.get_item_index(1), book.kind != "web" or archived)
 	_menu.set_item_tooltip(_menu.get_item_index(1), "Archived books are only checked from their chapter list" if archived and book.kind == "web" else "")
-	_menu.set_item_disabled(_menu.get_item_index(3), not Library.is_file_book(book))
+	_menu.set_item_disabled(_menu.get_item_index(3), Library.editable_fields(book).is_empty())
 	_menu.position = Vector2i(at * get_window().content_scale_factor)
 	_menu.popup()
 

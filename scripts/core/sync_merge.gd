@@ -224,7 +224,7 @@ static func detail_fields(local: Dictionary, entry: Dictionary) -> Dictionary:
 	var remote_newer := num(entry.get("modified", 0)) > num(local.get("modified", 0))
 	var fields := {"modified": maxf(num(entry.get("modified", 0)), num(local.get("modified", 0)))}
 	if remote_newer:
-		for f in ["title", "author", "synopsis", "tags", "extra", "cover_url", "rss_only", "url", "source", "kind", "total_words", "dropped", "archived", "favorite"]:
+		for f in ["title", "author", "synopsis", "tags", "tags_set", "extra", "cover_url", "rss_only", "url", "source", "kind", "total_words", "dropped", "archived", "favorite"]:
 			if entry.has(f):
 				fields[f] = entry[f]
 	else:
