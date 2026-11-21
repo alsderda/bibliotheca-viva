@@ -146,6 +146,14 @@ godot --path . -- --profile=selftest --selftest   # every script compiles, text 
 
 A GitHub check (`.github/workflows/tests.yml`) runs it headless on Linux for every PR and push to `main`. There's no TTS there, so the pacing checks are skipped, and `plugins/` isn't in the repo, so no plugin checks run.
 
+### Follow-along check
+
+```sh
+godot --path . --resolution 412x860 -- --profile=followcheck --ui-scale=1 --followcheck
+```
+
+Needs a window and a system voice. Imports a generated book into the `followcheck` profile (wiped first), reads it aloud for 40 s in paragraph mode and 40 s in sentence mode with Follow along on, and prints a `FOLLOWCHECK` line per mode: how often and how long the spoken words were off screen, and the long or backward frames while scrolling. `--followshots` instead saves screenshots of each highlight style to `followcheck_shots` in the data folder.
+
 ### Plugin test
 
 ```sh
@@ -162,7 +170,7 @@ Installs every plugin the repository lists, checks each one runs from the data f
 | `scripts/sources/` | `Plugins` (finds, loads, installs and removes plugins), `SourcePlugin` (the base class plugins extend, with HTML helpers), `Sources` (routes searches, new books and chapter downloads to plugins) |
 | `scripts/ui/` | Theme, icons (SVG rendered at runtime), app shell (`main.gd`), pages, widgets |
 | `scripts/ui/pages/reader_tts.gd` | Reading aloud in the reader: starting and stopping, the highlight, following it, reading ahead and moving on to the next chapter |
-| `scripts/dev/` | Self-test (`selftest.gd`, with one checks file per area in `checks/`), sync test, plugin test |
+| `scripts/dev/` | Self-test (`selftest.gd`, with one checks file per area in `checks/`), sync test, plugin test, follow-along check |
 | `scripts/sources/web_extract.gd` | JavaScript injected into Web-tab pages (finds chapter text and next/prev links on any page, runs plugins' site recognisers, highlights the paragraph being read) |
 | `addons/godot_wry/` | godot-wry 1.0.2 (MIT): system web view GDExtension for Windows, macOS, Linux (the Linux library has an upstream fix on top, see "Linux AppImage") |
 | `plugins/` | Plugins you're working on (git-ignored; see [PLUGINS.md](../PLUGINS.md)) |
