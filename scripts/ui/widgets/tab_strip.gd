@@ -1,8 +1,9 @@
 class_name TabStrip
 extends HBoxContainer
 ## A row of page tabs that scrolls sideways when it doesn't fit, and shows that
-## it does: the clipped edge fades out, and on computers a chevron button floats
-## over that edge to page the row along (a mouse can't drag a ScrollContainer).
+## it does: the clipped edge fades out and a chevron button floats over that
+## edge to page the row along. A mouse can't drag a ScrollContainer, and on a
+## touch screen the arrow is what tells the user there are more tabs to swipe to.
 ##
 ## Layout: a ScrollContainer (taking the strip's full width) of the tab buttons,
 ## with an overlay on top carrying the edge fades and the chevrons. Each chevron
@@ -26,23 +27,20 @@ var scroll_offset: float:
 ## The chevron buttons float over the row's ends, so each fade is opaque under
 ## the arrow glyph (letters showing through it look broken), then ramps to
 ## transparent just inside it: the next tab reads up to the arrow and fades
-## out behind it. Without chevrons (phones) the fade is just the ramp.
+## out behind it.
 const CHEV_SIZE := 28.0
 ## Where the 20 px arrow glyph, centred in the button, ends.
 const CHEV_GLYPH_END := 24.0
 const FADE_RAMP := 22.0
-const FADE_PC := CHEV_GLYPH_END + FADE_RAMP
-const FADE_PHONE := FADE_RAMP
+const FADE_W := CHEV_GLYPH_END + FADE_RAMP
 
 var _buttons: Array[Button] = []
 var _on_select: Callable
 var _selected := 0
 var _phone := false
-var _pc := false
 var _pending := 0.0
 var _revealed := false
 var _settled := false
-var _fade_w := FADE_PHONE
 var _scroll: ScrollContainer
 var _row: HBoxContainer
 var _left: Button
@@ -61,9 +59,6 @@ func _init(names: PackedStringArray, selected: int, on_select: Callable, phone :
 	_phone = phone
 	_on_select = on_select
 	_selected = selected
-	# Chevrons are for mouse users; touch screens drag the row directly.
-	_pc = OS.has_feature("pc")
-	_fade_w = FADE_PC if _pc else FADE_PHONE
 	mouse_filter = Control.MOUSE_FILTER_PASS
 	add_theme_constant_override("separation", 0)
 	# A container, not a plain Control, so the row's height reaches the strip's
@@ -86,9 +81,8 @@ func _init(names: PackedStringArray, selected: int, on_select: Callable, phone :
 	var overlay := Control.new()
 	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	clip.add_child(overlay)
-	var hard := CHEV_GLYPH_END if _pc else 0.0
-	_fade_l = _make_fade(false, _fade_w, hard)
-	_fade_r = _make_fade(true, _fade_w, hard)
+	_fade_l = _make_fade(false, FADE_W, CHEV_GLYPH_END)
+	_fade_r = _make_fade(true, FADE_W, CHEV_GLYPH_END)
 	overlay.add_child(_fade_l)
 	overlay.add_child(_fade_r)
 	# The chevrons sit on top of the fades, anchored to the overlay's edges, so
@@ -246,7 +240,7 @@ func _page(dir: int) -> void:
 		_page_tween.kill()
 	# Move by what shows between the two edge overlays, so the tab that was
 	# fading behind the arrow ends up fully readable; always move a little.
-	var step := maxf(_scroll.size.x - 2.0 * _fade_w, 40.0)
+	var step := maxf(_scroll.size.x - 2.0 * FADE_W, 40.0)
 	var target := clampf(float(_scroll.scroll_horizontal) + step * float(dir), 0.0, _max_scroll())
 	_page_tween = create_tween()
 	_page_tween.tween_property(_scroll, "scroll_horizontal", int(round(target)), 0.18).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
@@ -300,8 +294,8 @@ func _settle(hops: int) -> void:
 		var view := _scroll.size.x
 		# A rebuild (filtering, picking a tab) restores the old scroll; keep it
 		# when the picked tab already shows clear of both edge overlays.
-		var lz := _fade_w if target > 0.0 else 0.0
-		var rz := _fade_w if target < maxs - 0.5 else 0.0
+		var lz := FADE_W if target > 0.0 else 0.0
+		var rz := FADE_W if target < maxs - 0.5 else 0.0
 		var clear := b.position.x >= target + lz and b.position.x + b.size.x <= target + view - rz
 		if not clear:
 			# Otherwise centre it (clamped to the scroll range), so parts of
@@ -322,8 +316,8 @@ func _refresh_indicators() -> void:
 	var over := max_scroll > 1.0
 	var left := over and _scroll.scroll_horizontal > 0
 	var right := over and float(_scroll.scroll_horizontal) < max_scroll - 0.5
-	_left.visible = _pc and left
-	_right.visible = _pc and right
+	_left.visible = left
+	_right.visible = right
 	_fade_l.visible = left
 	_fade_r.visible = right
 
