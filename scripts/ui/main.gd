@@ -543,7 +543,10 @@ func _on_resize() -> void:
 			_sidebar.set_anchors_preset(Control.PRESET_TOP_LEFT)
 			_root.move_child(_sidebar, 0)
 	_sidebar_sep.visible = not compact
-	(_topbar.get_theme_stylebox("panel") as StyleBoxFlat).content_margin_left = 8 if compact else 28
+	var bar_style := _topbar.get_theme_stylebox("panel") as StyleBoxFlat
+	bar_style.content_margin_left = 8 if compact else 28
+	# Phones keep both edges tight, so the tab strip's arrows sit near the screen edge.
+	bar_style.content_margin_right = 8 if compact else 20
 	for p in pages.values():
 		p.set_compact(compact)
 	_rebuild_topbar()

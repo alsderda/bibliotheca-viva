@@ -90,8 +90,18 @@ func _init(names: PackedStringArray, selected: int, on_select: Callable, phone :
 	# the ignored overlay lets the rest through to the tabs beside it.
 	_left = UI.icon_button("chev_left", "Scroll tabs left", _page_left)
 	_right = UI.icon_button("chev_right", "Scroll tabs right", _page_right)
+	# GhostButton's padding would make them 40 px wide, overhanging the right
+	# edge and pushing the left arrow inwards; the fades assume CHEV_SIZE.
+	var styles := {
+		"normal": UiTheme.box(Color.TRANSPARENT),
+		"hover": UiTheme.box(UiTheme.SURFACE_2),
+		"pressed": UiTheme.box(UiTheme.SURFACE_3),
+		"hover_pressed": UiTheme.box(UiTheme.SURFACE_3),
+	}
 	for c in [_left, _right]:
 		c.visible = false
+		for state in styles:
+			c.add_theme_stylebox_override(state, styles[state])
 		c.gui_input.connect(_on_chev_wheel)
 		overlay.add_child(c)
 	_anchor_chev(_left, false)
