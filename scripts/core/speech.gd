@@ -85,6 +85,7 @@ func _ready() -> void:
 		_linux = LinuxVoice.new()
 		add_child(_linux)
 		_linux.ended.connect(_on_ended)
+		_linux.resumed.connect(_on_linux_resumed)
 		_linux.failed.connect(_on_linux_failed)
 	if Engine.has_singleton("BibliothecaVivaSpeech"):
 		_droid = Engine.get_singleton("BibliothecaVivaSpeech")
@@ -564,6 +565,16 @@ func _on_boundary(pos: int, id: int) -> void:
 	if id != _active_id or current < 0 or current >= items.size():
 		return
 	var c := para_char(str(items[current].text), _chunks, _chunk, pos)
+	if c != -1:
+		word_boundary.emit(current, c)
+
+
+## LinuxVoice resumed the utterance at `offset` chars of it (spd-say restarts it
+## there instead of from the start): move the highlight estimate there too.
+func _on_linux_resumed(id: int, offset: int) -> void:
+	if id != _active_id or current < 0 or current >= items.size():
+		return
+	var c := para_char(str(items[current].text), _chunks, _chunk, offset)
 	if c != -1:
 		word_boundary.emit(current, c)
 

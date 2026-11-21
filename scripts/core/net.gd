@@ -313,9 +313,7 @@ func _keep_wait(key: String, seconds: float) -> void:
 		if float(saved[k]) > now:
 			waits[k] = saved[k]
 	waits[key] = maxf(float(waits.get(key, 0.0)), now + seconds)
-	var f := FileAccess.open(_waits_path(), FileAccess.WRITE)
-	if f:
-		f.store_string(JSON.stringify(waits))
+	SafeFile.write_text(_waits_path(), JSON.stringify(waits))
 
 
 ## At start: puts back the waits that aren't over yet, or forgets them if the setting is off.
@@ -369,10 +367,10 @@ func _use_cache(path: String, url: String, r: Dictionary) -> Dictionary:
 		var meta := _cache_meta(path)
 		if meta.is_empty():
 			return r
+		if not FileAccess.file_exists(path + ".bin"):
+			return r
 		var bytes := FileAccess.get_file_as_bytes(path + ".bin")
-		var f := FileAccess.open(path + ".json", FileAccess.READ_WRITE)  # touch it, so it's kept longest
-		if f:
-			f.store_string(JSON.stringify(meta))
+		SafeFile.write_text(path + ".json", JSON.stringify(meta))  # touch it, so it's kept longest
 		return {"ok": true, "code": 200, "body": bytes, "headers": PackedStringArray(meta.get("headers", [])), "error": "", "not_modified": true}
 	if r.code != 200:
 		return r
@@ -385,11 +383,11 @@ func _use_cache(path: String, url: String, r: Dictionary) -> Dictionary:
 			DirAccess.remove_absolute(path + ".bin")
 		return r
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
-	var b := FileAccess.open(path + ".bin", FileAccess.WRITE)
-	var j := FileAccess.open(path + ".json", FileAccess.WRITE)
-	if b and j:
-		b.store_buffer(r.body)
-		j.store_string(JSON.stringify({"url": url, "etag": etag, "last_modified": modified, "headers": Array(r.headers)}))
+	# The body lands first and the index last: a crash in between leaves the
+	# old index pointing at a complete body, never an index without one.
+	if not SafeFile.write_bytes(path + ".bin", r.body):
+		return r
+	SafeFile.write_text(path + ".json", JSON.stringify({"url": url, "etag": etag, "last_modified": modified, "headers": Array(r.headers)}))
 	_cache_writes += 1
 	if _cache_writes % 50 == 0:
 		_prune_cache(false)

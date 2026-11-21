@@ -175,6 +175,8 @@ func _limits(t: Node) -> void:
 	var c: Dictionary = await chunks._receive("GET")
 	t.check("oversized chunk fails", c.ok, false)
 	t.check("oversized chunk says too much data", c.error.contains("too much"), true)
+	t.check("pack unpack cap covers a full pack", Sync.PACK_GZIP_MAX > Sync.PACK_BYTES, true)
+	t.check("pack unpack cap stays a small multiple of PACK_BYTES", Sync.PACK_GZIP_MAX <= Sync.PACK_BYTES * 8, true)
 
 
 ## A version counts as uploaded only when the manifest is listed in its folder.

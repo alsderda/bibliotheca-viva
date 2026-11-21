@@ -8,7 +8,10 @@ extends Node
 ## tags out loud: "Hello mark name 5 world mark name 11". So each utterance is spoken
 ## here by one `spd-say --wait` process instead; it exits when the speech ends.
 ##
-## spd-say can't pause, so pause() stops the utterance and resume() starts it again.
+## spd-say can't pause, so pause() stops the utterance and resume() speaks its
+## unheard rest: the offset reached is estimated from the speaking time and the
+## measured rate, snapped back to a word start, and reported so the highlight
+## can continue from the same place.
 ##
 ## RHVoice voices are rendered to a file with RHVoice-test instead, when it is
 ## installed, and played with an AudioStreamPlayer, like WinVoice does on Windows.
@@ -19,6 +22,8 @@ extends Node
 
 signal ended(id: int)
 signal failed  # spd-say is unusable; the caller should fall back to DisplayServer TTS
+## resume() restarted the utterance at this character offset of its text.
+signal resumed(id: int, offset: int)
 
 const APP_NAME := "bibliotheca-viva"
 ## speech-dispatcher applies a cancel a moment after confirming it, and a message that
@@ -28,10 +33,17 @@ const RH_TOOL := "RHVoice-test"
 ## The speeds RHVoice itself can reach; it quietly clamps anything outside.
 const RH_MIN_RATE := 0.5
 const RH_MAX_RATE := 2.0
+## Starting guess of characters spoken per second at 1x, for the resume offset.
+const EST_CPS := 14.0
 
 var _pid := -1
 var _id := -1
-var _args := PackedStringArray()  # of the current utterance, to start it again on resume()
+var _args := PackedStringArray()  # launch args of the current utterance, ending with its text
+var _full := ""  # the whole utterance text, to resume from an offset on resume()
+var _base := 0  # offset in _full of the text currently being spoken
+var _rate_now := 1.0  # rate of the current utterance, for the resume estimate
+var _resume_off := 0  # offset in _full to resume from
+var _cps := EST_CPS  # measured characters per second at 1x, learned from finished utterances
 var _paused := false
 var _started_at := 0
 var _cancelled_at := -AFTER_CANCEL_MS
@@ -146,6 +158,10 @@ func speak(text: String, voice: String, volume: int, rate: float, pitch: float, 
 		_args.append_array(["--synthesis-voice", voice])
 	_args.append_array(["--", text])  # "--" so text starting with "-" isn't taken as an option
 	_id = id
+	_full = text
+	_base = 0
+	_rate_now = rate
+	_resume_off = 0
 	_launch()
 
 
@@ -167,6 +183,11 @@ func pause() -> void:
 	_paused = true
 	_player.stream_paused = true
 	if _id != -1:
+		# The killed utterance can't report where it stopped, so estimate it from
+		# the speaking time and resume a little before it, at a word start.
+		if _pid > 0:
+			var el := maxf(float(Time.get_ticks_msec() - _started_at) / 1000.0, 0.0)
+			_resume_off = _base + resume_offset(_full.substr(_base), int(el * _rate_now * _cps))
 		_halt()
 
 
@@ -176,7 +197,24 @@ func resume() -> void:
 	_paused = false
 	_player.stream_paused = false
 	if _id != -1:
+		var rest := _full.substr(_resume_off)
+		if rest.strip_edges().is_empty():
+			_resume_off = 0
+			rest = _full
+		_args[_args.size() - 1] = rest
+		_base = _resume_off
 		_launch()
+		resumed.emit(_id, _resume_off)
+
+
+## Where resume() restarts `text` after about `progress` chars of it were heard:
+## the start of the word cut off by the estimate, so no word is cut short and at
+## most whole words are repeated.
+static func resume_offset(text: String, progress: int) -> int:
+	var off := clampi(progress, 0, text.length())
+	while off > 0 and not text.substr(off - 1, 1).strip_edges().is_empty():
+		off -= 1
+	return off
 
 
 ## Speed up (speed > 1) or slow down 16-bit mono PCM without changing its pitch (WSOLA):
@@ -285,6 +323,20 @@ func _launch() -> void:
 	set_process(true)
 
 
+## Learn the voice's speed from a finished utterance, so the resume offset follows
+## the actual voice, engine and rate. Short and tiny utterances time unreliably.
+func _learn_speed() -> void:
+	if _args.is_empty() or _rate_now <= 0.0:
+		return
+	var secs := float(Time.get_ticks_msec() - _started_at) / 1000.0
+	var chars := _args[_args.size() - 1].length()
+	if secs <= 0.5 or chars < 40:
+		return
+	var cps := chars / secs / _rate_now
+	if cps > 5.0 and cps < 40.0:
+		_cps = lerpf(_cps, cps, 0.5)
+
+
 ## Stop the running utterance. Killing spd-say only drops its connection; the message
 ## it already handed to speech-dispatcher keeps playing, so it is cancelled as well.
 ## This waits for the cancel so it can't hit an utterance started right after.
@@ -312,6 +364,7 @@ func _process(_delta: float) -> void:
 			return
 		var id := _id
 		_id = -1
+		_learn_speed()
 		ended.emit(id)
 	if not _launch_pending and _pid <= 0 and _jobs.is_empty():
 		set_process(false)

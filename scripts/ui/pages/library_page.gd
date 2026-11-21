@@ -36,6 +36,9 @@ var _rebuild_queued := false
 ## The top bar's filter box. Kept across top bar rebuilds (a sync or plugin
 ## change can rebuild it while you type), so it doesn't lose focus.
 var _search: SearchBox
+## Fires the card grid rebuild once typing pauses: a full rebuild per
+## keystroke drops frames on big libraries.
+var _search_timer: Timer
 
 
 func _ready() -> void:
@@ -52,6 +55,11 @@ func _ready() -> void:
 	_menu.add_item("Remove from library", 2)
 	_menu.id_pressed.connect(_on_menu)
 	add_child(_menu)
+	_search_timer = Timer.new()
+	_search_timer.one_shot = true
+	_search_timer.wait_time = 0.15
+	_search_timer.timeout.connect(_on_search_idle)
+	add_child(_search_timer)
 	Library.changed.connect(func(): _dirty = true; _rebuild_soon())
 	Plugins.changed.connect(func(): if visible: _rebuild())
 	Settings.changed.connect(func(k): if k == "tag_aliases" and visible: _rebuild())
@@ -69,6 +77,11 @@ func _rebuild_soon() -> void:
 
 func _rebuild_queued_now() -> void:
 	_rebuild_queued = false
+	if visible:
+		_rebuild()
+
+
+func _on_search_idle() -> void:
 	if visible:
 		_rebuild()
 
@@ -98,7 +111,7 @@ func build_actions(bar: HBoxContainer) -> void:
 func _search_field() -> SearchBox:
 	if _search == null:
 		_search = SearchBox.new("Filter books", 220.0)
-		_search.field.text_changed.connect(func(t): _filter_text = t; _rebuild())
+		_search.field.text_changed.connect(func(t): _filter_text = t; _search_timer.start())
 	if _search.field.text != _filter_text:
 		_search.field.text = _filter_text
 	if _search.get_parent():

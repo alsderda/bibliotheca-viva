@@ -210,7 +210,10 @@ func go_to_chapter(index: int, start_tts := false) -> void:
 	Speech.stop()
 	chapter = index
 	header_changed.emit()
+	var id: String = book.get("id", "")
 	await _load_chapter(0)
+	if book.get("id", "") != id or chapter != index:
+		return
 	Library.set_progress(book.id, chapter, 0)
 	if start_tts or was_playing:
 		start_tts(0)
@@ -235,7 +238,6 @@ func _load_chapter(paragraph: int) -> void:
 	if data.is_empty() or data.get("excerpt", false):
 		data = await Sources.load_chapter(book, chapter)
 	if token != _load_token:
-		_loading = false
 		return
 	if data.has("error") and not data.has("paragraphs"):
 		_set_status(data.error, true)
@@ -248,6 +250,8 @@ func _load_chapter(paragraph: int) -> void:
 	_items = _make_items(data, chapter)
 	_render()
 	await get_tree().process_frame
+	if token != _load_token:
+		return
 	_restoring = true
 	_scroll_to(paragraph, false)
 	_restoring = false
@@ -552,11 +556,12 @@ static func _mark_span(bb: String, from: int, to: int, open: String, close: Stri
 func show_match(index: int, paragraph: int, from: int, matched: String) -> void:
 	select_tab(0)
 	header_changed.emit()
+	var id: String = book.get("id", "")
 	if index != chapter or _items.is_empty():
 		Speech.stop()
 		chapter = index
 		await _load_chapter(paragraph)
-	if chapter != index or _items.is_empty():
+	if book.get("id", "") != id or chapter != index or _items.is_empty():
 		return  # the chapter didn't load; its status message says why
 	var p := paragraph
 	if p >= _items.size() or _visible_text(_items[p].bb).substr(from, matched.length()) != matched:
@@ -570,7 +575,10 @@ func show_match(index: int, paragraph: int, from: int, matched: String) -> void:
 			return
 	_find = {"paragraph": p, "from": from, "to": from + matched.length()}
 	_render()
+	var token := _load_token
 	await get_tree().process_frame
+	if token != _load_token or book.get("id", "") != id:
+		return
 	_scroll_to(p, false)
 	Library.set_progress(book.id, chapter, p)
 
@@ -1062,7 +1070,12 @@ func go_to_bookmark(m: Dictionary) -> void:
 	select_tab(0)
 	header_changed.emit()
 	if m.chapter == chapter and not _items.is_empty():
+		var id: String = book.get("id", "")
+		var at := chapter
+		var token := _load_token
 		await get_tree().process_frame
+		if token != _load_token or book.get("id", "") != id or chapter != at:
+			return
 		_scroll_to(m.paragraph, false)
 		Library.set_progress(book.id, chapter, m.paragraph)
 		return

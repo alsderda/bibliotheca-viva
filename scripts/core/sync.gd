@@ -64,7 +64,7 @@ const PACE := 0.1            # shortest gap between two requests on one connecti
 const PARALLEL := 4          # connections used for a book's chapters (Koofr takes ~0.3 s per request)
 const PACK_MIN := 10         # chapters of a book to send at once before they go in packs
 const PACK_BYTES := 2000000  # most chapter text in one pack, before it's gzipped
-const PACK_GZIP_MAX := 268435456  # biggest unpacked pack accepted (256 MiB); a pack holds at most PACK_BYTES of chapter text
+const PACK_GZIP_MAX := PACK_BYTES * 8  # biggest unpacked pack accepted; a pack holds at most PACK_BYTES of chapter text, the margin covers the JSON envelope and escaping
 
 var running := false
 var last_error := ""
@@ -1286,6 +1286,9 @@ func _chapter_jobs(b: Dictionary, downs: Array, ups: Array, remote: Dictionary, 
 	for u in ups:
 		var f := FileAccess.open("%s/%d.json" % [Library.book_dir(b.id), u[1]], FileAccess.READ)
 		var size := f.get_length() if f else 0
+		if size > PACK_BYTES:  # on its own, so no pack can unpack past PACK_GZIP_MAX
+			jobs.append({"kind": "put", "name": u[0], "count": 1})
+			continue
 		if not names.is_empty() and bytes + size > PACK_BYTES:
 			jobs.append({"kind": "put_pack", "names": names, "count": names.size()})
 			names = []
