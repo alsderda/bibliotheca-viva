@@ -162,7 +162,7 @@ func _rebuild() -> void:
 		elif tab == FAVORITES_TAB and _filter_text == "" and not _filters_active():
 			none = "No favorites yet. Press Favorite on a book's Details tab to add it here."
 		elif tab == ARCHIVE_TAB and _filter_text == "" and not _filters_active():
-			none = "Nothing archived. Books you archive from their Details tab move here, out of Reading and the other tabs. Favorites keep showing in Favorites."
+			none = "Nothing archived. Books you archive from their Details tab move here, out of Reading, the other tabs and Updates. Favorites keep showing in Favorites."
 		_content.add_child(UI.label(none, "Muted", true))
 		return
 	var layout := _grid_layout(_measure_width(), _grid_target(), _grid_gap())
@@ -571,7 +571,9 @@ func _import_files(paths: PackedStringArray) -> void:
 func _show_menu(id: String, at: Vector2) -> void:
 	_menu_book = id
 	var book := Library.get_book(id)
-	_menu.set_item_disabled(_menu.get_item_index(1), book.kind != "web")
+	var archived := Library.is_archived(book)
+	_menu.set_item_disabled(_menu.get_item_index(1), book.kind != "web" or archived)
+	_menu.set_item_tooltip(_menu.get_item_index(1), "Archived books are only checked from their chapter list" if archived and book.kind == "web" else "")
 	_menu.set_item_disabled(_menu.get_item_index(3), not Library.is_file_book(book))
 	_menu.position = Vector2i(at * get_window().content_scale_factor)
 	_menu.popup()

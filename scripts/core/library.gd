@@ -207,7 +207,8 @@ func set_dropped(id: String, dropped: bool) -> void:
 
 
 ## Archiving takes a book out of the library's Reading, All, Ebooks and Web
-## serials tabs and out of "continue reading" (last_read); the Archive tab shows
+## serials tabs, out of "continue reading" (last_read) and out of Updates, whose
+## Check for updates skips it (see UpdatesPage.followed); the Archive tab shows
 ## it, and Favorites still does if it's a favorite: a favorite you reread now and
 ## then without wanting it in Reading every time. Unlike dropped, opening the book
 ## doesn't undo it; only set_archived(id, false) does. Changes `modified`, so sync
