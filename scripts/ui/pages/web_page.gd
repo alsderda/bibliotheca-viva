@@ -509,7 +509,7 @@ func _sync_fiction(book: Dictionary, fiction: Dictionary) -> void:
 	if chapters.size() <= book.chapters.size() and not book.get("rss_only", false):
 		return
 	Library.replace_chapters(book.id, chapters.map(func(c): return {"title": c.title, "url": c.url, "date": c.get("date", 0)}))
-	var fields := {"last_checked": Time.get_unix_time_from_system()}
+	var fields := {"last_checked": Time.get_unix_time_from_system(), "possible_gap": false}
 	if book.author == "" and fiction.get("author", "") != "":
 		fields.author = fiction.author
 	if book.synopsis == "" and fiction.get("synopsis", "") != "":

@@ -230,6 +230,14 @@ static func detail_fields(local: Dictionary, entry: Dictionary) -> Dictionary:
 	else:
 		fields["rss_only"] = local.get("rss_only", false)  # replace_chapters clears it
 	fields["last_checked"] = maxf(num(local.get("last_checked", 0)), num(entry.get("last_checked", 0)))
+	var local_full := num(local.get("last_full_check", 0))
+	var entry_full := num(entry.get("last_full_check", 0))
+	fields["last_full_check"] = maxf(local_full, entry_full)
+	# The side with the newer full check decides; on a tie either flag counts, and it clears on the next full check.
+	if local_full == entry_full:
+		fields["possible_gap"] = bool(local.get("possible_gap", false)) or bool(entry.get("possible_gap", false))
+	else:
+		fields["possible_gap"] = bool(local.get("possible_gap", false)) if local_full > entry_full else bool(entry.get("possible_gap", false))
 	return fields
 
 
