@@ -45,6 +45,7 @@ var _menu_paragraph := -1        # paragraph the context menu was opened on
 var _press_timer: Timer          # long-press on a paragraph (touch screens)
 var _press_at := Vector2.ZERO
 var _tap := false                # the current touch is still a plain tap
+var _press_scroll := 0.0         # scroll position when the current touch began
 var _read_stack: Control         # the text and the floating bars live here
 var _sel_bar: SelectionBar       # touch selection pop-up over the text
 var _sel_paragraph := -1         # paragraph the selection bar was opened on
@@ -1603,6 +1604,7 @@ func _on_text_input(e: InputEvent) -> void:
 	elif e is InputEventScreenTouch:
 		if e.pressed:
 			_press_at = e.position
+			_press_scroll = _text.get_v_scroll_bar().value
 			_tap = not e.double_tap
 			_hide_selection_bar()
 			if _tap:
@@ -1617,7 +1619,9 @@ func _on_text_input(e: InputEvent) -> void:
 			# gets the emulated mouse press before this touch event), so without
 			# this a touch screen could never dismiss a selection. After a long
 			# press the label still holds what the jitter selected and brings it back.
-			if _tap or long_press:
+			# A slow swipe both scrolls and selects; the selection is a side effect.
+			var scrolled := absf(_text.get_v_scroll_bar().value - _press_scroll) > 1.0
+			if _tap or long_press or scrolled:
 				_text.deselect.call_deferred()
 			else:
 				_maybe_show_selection_bar.call_deferred(e.position)
