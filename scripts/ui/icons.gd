@@ -65,6 +65,35 @@ const PATHS := {
 }
 
 static var _cache := {}
+## Set from the app's pause/resume notifications. While true, textures made now may never reach the GPU.
+static var _in_background := false
+## Textures made while in the background, as {"tex": ImageTexture, "svg": String, "scale": float, "size": int}, to upload again.
+static var _stale: Array[Dictionary] = []
+
+
+## Call on NOTIFICATION_APPLICATION_PAUSED. Icons asked for after this (e.g. when the notification or another
+## app pauses reading aloud) are still returned and cached, but remembered in _stale.
+static func app_paused() -> void:
+	_in_background = true
+
+
+## Call once a frame has been drawn after NOTIFICATION_APPLICATION_RESUMED (await RenderingServer.frame_post_draw),
+## since the resume notification can arrive before the GL surface is back. Re-renders every texture in _stale
+## into the same ImageTexture with set_image(), so controls already showing it are fixed without a refresh.
+static func app_resumed() -> void:
+	_in_background = false
+	for entry in _stale:
+		var tex: ImageTexture = entry.tex
+		tex.set_image(_render(entry.svg, entry.size, entry.scale))
+		if entry.scale != 1.0:
+			tex.set_size_override(Vector2i(entry.size, entry.size))
+	_stale.clear()
+
+
+static func _render(svg: String, size: int, scale: float) -> Image:
+	var img := Image.new()
+	img.load_svg_from_string(svg, size / 24.0 * scale)
+	return img
 
 
 static func get_icon(name: String, color := Color.WHITE, size := 20) -> Texture2D:
@@ -78,10 +107,10 @@ static func get_icon(name: String, color := Color.WHITE, size := 20) -> Texture2
 	var hex := "#" + color.to_html(false)
 	var body: String = PATHS.get(name, PATHS.info).replace("CLR", hex)
 	var svg := "<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%s' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round' stroke-opacity='%.3f'>%s</svg>" % [hex, color.a, body]
-	var img := Image.new()
-	img.load_svg_from_string(svg, size / 24.0 * scale)
-	var tex := ImageTexture.create_from_image(img)
+	var tex := ImageTexture.create_from_image(_render(svg, size, scale))
 	if scale != 1.0:
 		tex.set_size_override(Vector2i(size, size))
 	_cache[key] = tex
+	if _in_background:
+		_stale.append({"tex": tex, "svg": svg, "scale": scale, "size": size})
 	return tex

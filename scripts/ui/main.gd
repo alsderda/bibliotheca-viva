@@ -37,6 +37,7 @@ var _sidebar_style: StyleBoxFlat
 var _insets := Vector4.ZERO
 var _cutouts: Array[Rect2] = []  # camera holes, in UI units
 var _bar_span := Vector2(-1, -1)  # top bar x and width the camera-hole fit was made for
+var _icon_generation := 0  # pause/resume count; a resume redraws icons only if no pause came after it
 
 const TOP_ROW_HEIGHT := 60.0
 const HOLE_PAD := 8.0  # space kept between the camera hole and the buttons beside it
@@ -932,6 +933,17 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 
+# A drawn frame proves the GL surface is back, so icons made while the app was
+# away can be uploaded again. Skipped when a pause came after this resume.
+func _reupload_icons() -> void:
+	_icon_generation += 1
+	var gen := _icon_generation
+	await RenderingServer.frame_post_draw
+	if gen != _icon_generation:
+		return
+	Icons.app_resumed()
+
+
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
 		if _drawer.visible:
@@ -945,8 +957,12 @@ func _notification(what: int) -> void:
 		get_tree().root.propagate_notification(NOTIFICATION_WM_CLOSE_REQUEST)
 		if get_tree().auto_accept_quit:
 			get_tree().quit()
+	elif what == NOTIFICATION_APPLICATION_PAUSED:
+		Icons.app_paused()
+		_icon_generation += 1
 	elif what == NOTIFICATION_APPLICATION_RESUMED:
 		_update_safe_area()
+		_reupload_icons()
 	elif what == NOTIFICATION_WM_CLOSE_REQUEST:
 		var t := Time.get_ticks_msec()
 		Speech.stop()
