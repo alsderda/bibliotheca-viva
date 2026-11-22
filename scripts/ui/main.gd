@@ -179,6 +179,20 @@ func _let_scroll_through(node) -> void:  # untyped: the node may be freed by now
 		(c as BaseButton).action_mode = BaseButton.ACTION_MODE_BUTTON_RELEASE
 
 
+# Godot types through a hidden Android text box. Sometimes that box keeps
+# Android's focus after no field is being edited any more, and then Android
+# brings the keyboard up by itself each time the app comes back to the front.
+# Godot's hide also hands that focus back to the game view, so hide the
+# keyboard while the app goes to the background, unless a field is being typed in.
+func _hide_stray_keyboard() -> void:
+	if not DisplayServer.has_feature(DisplayServer.FEATURE_VIRTUAL_KEYBOARD):
+		return
+	var f := get_viewport().gui_get_focus_owner()
+	if (f is LineEdit or f is TextEdit) and f.is_visible_in_tree():
+		return
+	DisplayServer.virtual_keyboard_hide()
+
+
 func _apply_scale() -> void:
 	var s := 1.0
 	if OS.has_feature("mobile"):
@@ -960,6 +974,7 @@ func _notification(what: int) -> void:
 	elif what == NOTIFICATION_APPLICATION_PAUSED:
 		Icons.app_paused()
 		_icon_generation += 1
+		_hide_stray_keyboard()
 	elif what == NOTIFICATION_APPLICATION_RESUMED:
 		_update_safe_area()
 		_reupload_icons()
