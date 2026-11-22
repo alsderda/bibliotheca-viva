@@ -56,6 +56,12 @@ var _sel_bar: SelectionBar       # touch selection pop-up over the text
 var _sel_paragraph := -1         # paragraph the selection bar was opened on
 var _sel_popup: PopupMenu        # the bar's "More" menu, if open
 var _sleep_btn: Button
+var _rail_play_btn: Button
+var _rail_more_btn: Button
+var _rail_info_label: Label
+var _rail_rate_btn: Button
+var _rail_sleep_btn: Button
+var _rail_more_popover: Popover
 var _epub_dialog: FileDialog
 var _cover_dialog: FileDialog
 var _search_view: SearchView
@@ -128,6 +134,10 @@ func tabs() -> PackedStringArray:
 	return ["Read", "Contents", "Search", "Details", "Bookmarks"]
 
 
+func tab_icons() -> PackedStringArray:
+	return ["book", "list", "search", "info", "bookmark"]
+
+
 func nav_key() -> String:
 	return "library"
 
@@ -153,10 +163,11 @@ func build_actions(bar: HBoxContainer) -> void:
 	aa.name = "AaButton"
 	bar.add_child(aa)
 	_listen_shown = Speech.playing
-	var listen := UI.button("" if compact else ("Stop" if Speech.playing else "Listen"), "stop" if Speech.playing else "headphones",
-		"" if Speech.playing else "PrimaryButton", toggle_tts)
-	listen.tooltip_text = "Read aloud (Space)"
-	bar.add_child(listen)
+	if not _rail_tts_active():
+		var listen := UI.button("" if compact else ("Stop" if Speech.playing else "Listen"), "stop" if Speech.playing else "headphones",
+			"" if Speech.playing else "PrimaryButton", toggle_tts)
+		listen.tooltip_text = "Read aloud (Space)"
+		bar.add_child(listen)
 
 
 func _on_tab(i: int) -> void:
@@ -179,6 +190,74 @@ func _on_tab(i: int) -> void:
 
 func on_hidden() -> void:
 	_save_progress()
+	if is_instance_valid(_rail_more_popover):
+		_rail_more_popover.close()
+
+
+func on_shown() -> void:
+	_update_player()
+
+
+func build_rail_extras(box: VBoxContainer) -> void:
+	_rail_play_btn = null
+	_rail_more_btn = null
+	_rail_info_label = null
+	_rail_rate_btn = null
+	_rail_sleep_btn = null
+	if not _rail_tts_active():
+		if is_instance_valid(_rail_more_popover):
+			_rail_more_popover.close()
+		return
+	box.add_child(main.rail_button("skip_back", "Back a sentence / paragraph", func(): Speech.skip_sentence(-1)))
+	_rail_play_btn = _make_rail_play_button()
+	box.add_child(_rail_play_btn)
+	box.add_child(main.rail_button("skip_fwd", "Forward a sentence / paragraph", func(): Speech.skip_sentence(1)))
+	_rail_more_btn = main.rail_button("more", "More reading controls", _show_rail_more)
+	box.add_child(_rail_more_btn)
+
+
+func _make_rail_play_button() -> Button:
+	var b := Button.new()
+	b.theme_type_variation = "PrimaryButton"
+	b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size = Vector2(44, 44)
+	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.icon = Icons.get_icon("play" if Speech.paused else "pause", Color("#06121f"), 22)
+	b.add_theme_stylebox_override("normal", UiTheme.box(UiTheme.ACCENT, 22))
+	b.add_theme_stylebox_override("hover", UiTheme.box(UiTheme.ACCENT.lightened(0.1), 22))
+	b.add_theme_stylebox_override("pressed", UiTheme.box(UiTheme.ACCENT.darkened(0.1), 22))
+	b.pressed.connect(Speech.toggle)
+	return b
+
+
+func _rail_tts_active() -> bool:
+	return Speech.playing and Speech.source_owner == "reader" and tab == 0 \
+		and main != null and main.current == self and main.rail_active()
+
+
+func _show_rail_more() -> void:
+	if is_instance_valid(_rail_more_popover):
+		_rail_more_popover.close()
+	var content := UI.vbox(10)
+	content.custom_minimum_size.x = 260
+	_rail_info_label = UI.label("", "Small")
+	_rail_info_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	content.add_child(_rail_info_label)
+	_rail_rate_btn = UI.button("", "", "ChipButton", _cycle_rate)
+	_rail_rate_btn.tooltip_text = "Speed"
+	_rail_rate_btn.custom_minimum_size.y = 40
+	_rail_sleep_btn = UI.button("", "moon", "GhostButton", func(): Speech.cycle_sleep(); _update_player(), UiTheme.MUTED)
+	_rail_sleep_btn.custom_minimum_size.y = 40
+	content.add_child(UI.hbox(8, [_rail_rate_btn, _rail_sleep_btn]))
+	var voice: Button
+	voice = UI.button("Voice settings", "settings", "", func(): _show_tts_popup(voice))
+	voice.custom_minimum_size.y = 40
+	var stop := UI.button("Stop", "x", "", func(): Speech.stop(); tts.clear_highlight())
+	stop.custom_minimum_size.y = 40
+	content.add_child(UI.hbox(8, [voice, stop]))
+	_rail_more_popover = Popover.show_for(_rail_more_btn, content)
+	_update_player()
 
 
 ## Scroll to the paragraph being read aloud (used when jumping back from the sidebar).
@@ -707,8 +786,12 @@ func _update_footer() -> void:
 
 func _update_player() -> void:
 	var shown := Speech.playing and Speech.source_owner == "reader"
-	if _player.visible != shown:
-		_player.visible = shown
+	var rail_controls := _rail_tts_active()
+	var floating := shown and not rail_controls
+	if not rail_controls and is_instance_valid(_rail_more_popover):
+		_rail_more_popover.close()
+	if _player.visible != floating:
+		_player.visible = floating
 		_apply_layout()  # the text only leaves room at the bottom while the player shows
 	_play_btn.icon = Icons.get_icon("play" if Speech.paused else "pause", Color("#06121f"), 22)
 	_player_label.text = "%s  ·  paragraph %d of %d" % [Speech.voice_name(), Speech.current + 1, max(1, _items.size())]
@@ -717,6 +800,17 @@ func _update_player() -> void:
 	_sleep_btn.icon = Icons.get_icon("moon", UiTheme.ACCENT if sleeping else UiTheme.MUTED, 18)
 	_sleep_btn.tooltip_text = "Sleep timer: " + Speech.sleep_label()
 	_rate_btn.text = "%sx" % str(float(Settings.get_value("tts_rate"))).trim_suffix(".0")
+	if is_instance_valid(_rail_play_btn):
+		_rail_play_btn.icon = Icons.get_icon("play" if Speech.paused else "pause", Color("#06121f"), 22)
+	if is_instance_valid(_rail_info_label):
+		_rail_info_label.text = "%s  ·  paragraph %d of %d" % [Speech.voice_name(), Speech.current + 1, max(1, _items.size())]
+	if is_instance_valid(_rail_rate_btn):
+		_rail_rate_btn.text = _rate_btn.text
+	if is_instance_valid(_rail_sleep_btn):
+		var rail_sleeping := Speech.sleep_minutes != 0
+		_rail_sleep_btn.text = "Sleep" if not rail_sleeping else ("Chapter" if Speech.sleep_minutes == -1 else Speech.sleep_label())
+		_rail_sleep_btn.icon = Icons.get_icon("moon", UiTheme.ACCENT if rail_sleeping else UiTheme.MUTED, 18)
+		_rail_sleep_btn.tooltip_text = "Sleep timer: " + Speech.sleep_label()
 	_fit_player()  # the sleep and speed labels change the bar's width
 
 
@@ -877,6 +971,7 @@ func set_compact(value: bool) -> void:
 		_build_contents()
 	if _bookmarks_view.visible:
 		_build_bookmarks()
+	_update_player()
 
 
 func _build_contents() -> void:
@@ -1697,8 +1792,8 @@ func _tts_content() -> Control:
 var _tts_popup_node: Popover
 
 
-func _show_tts_popup() -> void:
-	var btn: Control = find_child("TtsSettingsButton", true, false)
+func _show_tts_popup(anchor: Control = null) -> void:
+	var btn: Control = anchor if is_instance_valid(anchor) else find_child("TtsSettingsButton", true, false)
 	_tts_popup_node = Popover.show_for(btn if btn else _player, _tts_content(), true)
 
 
