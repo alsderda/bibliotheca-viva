@@ -18,6 +18,7 @@ func _ready() -> void:
 	_library_sort()
 	_versions()
 	_updates_filters()
+	_icons()
 	_sync_password()
 	_app_log()
 	await _word_counts()
@@ -119,6 +120,31 @@ func _updates_filters() -> void:
 	check("updates never opened", UpdatesPage.unread_count(fresh), 3)
 	check("updates never opened chapter 0 unread", UpdatesPage.is_unread(fresh, 0), true)
 	check("updates no chapters", UpdatesPage.unread_count({"chapters": [], "progress": {"chapter": 0, "paragraph": 0}, "last_read": 0}), 0)
+
+
+## Icons made while the app is in the background are re-uploaded on resume, into
+## the same texture, so buttons showing them are fixed without a refresh.
+func _icons() -> void:
+	Icons._stale.clear()
+	Icons._in_background = false
+	Icons.get_icon("play", Color.WHITE, 21)
+	check("icons outside the background aren't remembered", Icons._stale.size(), 0)
+	Icons.app_paused()
+	check("paused background flag", Icons._in_background, true)
+	var tex := Icons.get_icon("play", Color.WHITE, 23)
+	check("background icon remembered", Icons._stale.size(), 1)
+	var size := tex.get_size()
+	Icons.app_resumed()
+	check("resumed background flag", Icons._in_background, false)
+	check("resumed stale list cleared", Icons._stale.size(), 0)
+	check("resumed icon is the same texture", Icons.get_icon("play", Color.WHITE, 23), tex)
+	check("resumed icon keeps its size", Icons.get_icon("play", Color.WHITE, 23).get_size(), size)
+	# Headless RenderingServer is a dummy with no GPU upload, so get_image() has nothing to return there.
+	if DisplayServer.get_name() == "headless":
+		check("resumed icon has a size", size.x > 0 and size.y > 0, true)
+	else:
+		var img := tex.get_image()
+		check("resumed icon image non-empty", img != null and not img.is_empty(), true)
 
 
 func _book_search() -> void:
