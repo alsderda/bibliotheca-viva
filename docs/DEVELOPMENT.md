@@ -102,7 +102,7 @@ The script finds the JDK and SDK in the usual places (or `JAVA_HOME`, `ANDROID_H
 The export is a Gradle build so that `addons/android_speech`, `addons/android_keystore` and `addons/android_share` can add to it:
 
 - a `<queries>` entry for `TTS_SERVICE`. Without it, Android 11+ hides third-party TTS engines (RHVoice, eSpeak, …) from the app and silently falls back to Google TTS.
-- a small Java plugin (`addons/android_speech/java`, copied into the build at export) that plays the speech itself from a foreground service. Godot's main loop stops while the app is in the background, so `scripts/core/speech.gd` hands the plugin everything it should read, with the pauses, in advance.
+- a small Java plugin (`addons/android_speech/java`, copied into the build at export) that plays the speech itself from a foreground service. Godot's main loop stops while the app is in the background, so `scripts/core/speech.gd` hands the plugin everything it should read, with the pauses, in advance. The plugin has the engine synthesize each sentence to a file a few sentences ahead and plays the audio and pauses through one AudioTrack of its own: Android's own TTS playback stops utterances smaller than its audio buffer early, and over Bluetooth short sentences at high speed then go unheard.
 - another Java plugin (`addons/android_keystore/java`) that encrypts the sync password with an AES key kept in the Android Keystore, for `scripts/core/keyring.gd`.
 - a third Java plugin (`addons/android_share/java`) that opens Android's share menu for a file the app wrote (the exported logs), through Godot's own FileProvider.
 

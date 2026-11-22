@@ -7,9 +7,10 @@ extends EditorPlugin
 ## - A <queries> entry for TTS_SERVICE. Since Android 11 an app only sees the TTS engines of
 ##   other apps (RHVoice, eSpeak, …) when its manifest declares it; otherwise TextToSpeech
 ##   silently falls back to a system engine such as Google TTS.
-## - Per-word ranges for follow-along: SpeechPlayer forwards the engine's
-##   UtteranceProgressListener.onRangeStart() (API 26+; engines without it send none)
-##   as the plugin's word_range signal, which speech.gd turns into word_boundary.
+## - Per-word ranges for follow-along: SpeechPlayer keeps the ranges the engine reports
+##   through UtteranceProgressListener.onRangeStart() while synthesizing (API 26+; engines
+##   without it send none) and replays each as the plugin's word_range signal when the
+##   audio reaches its frame; speech.gd turns them into word_boundary.
 ## Both need a Gradle build, which is the only kind where Godot adds manifest entries.
 
 var _export: ExportPlugin
