@@ -13,6 +13,9 @@ signal closed
 var _then: Callable
 var _input: LineEdit
 var _require := ""
+var _center: CenterContainer
+var _card: PanelContainer
+var _kb_height := -1.0
 
 
 static func open(host: Control, opts: Dictionary, then: Callable) -> ConfirmDialog:
@@ -35,10 +38,12 @@ func _build(o: Dictionary) -> void:
 	add_child(dim)
 
 	var center := CenterContainer.new()
+	_center = center
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(center)
 	var card := UI.panel("Card")
+	_card = card
 	card.add_theme_stylebox_override("panel", UiTheme.box(UiTheme.SURFACE, 16, UiTheme.BORDER, 1, Vector4(24, 22, 24, 20)))
 	card.custom_minimum_size.x = minf(460, get_viewport_rect().size.x - 24)
 	center.add_child(card)
@@ -94,6 +99,36 @@ func _build(o: Dictionary) -> void:
 		ok.add_theme_stylebox_override("pressed", UiTheme.box(UiTheme.BAD.darkened(0.1), 8, Color.TRANSPARENT, 0, pad))
 	buttons.add_child(ok)
 	col.add_child(UI.margin(buttons, 0, 6, 0, 0))
+
+	if _input == null or not DisplayServer.has_feature(DisplayServer.FEATURE_VIRTUAL_KEYBOARD):
+		set_process(false)
+
+
+## Keeps the card in the part of the screen the on-screen keyboard leaves free.
+## `height` is the keyboard's height in UI units (window pixels divided by the
+## window's content_scale_factor); 0 means no keyboard. Centres the card in the
+## space above the keyboard; when the card is taller than that space, its bottom
+## (text field and buttons) sits right on the keyboard and the top runs off-screen.
+func _fit_above_keyboard(height: float) -> void:
+	if is_equal_approx(height, _kb_height):
+		return
+	_kb_height = height
+	if height <= 0.0:
+		_center.offset_top = 0
+		_center.offset_bottom = 0
+		return
+	_center.offset_bottom = -height
+	var free := size.y - height
+	var need := _card.get_combined_minimum_size().y
+	if need > free:
+		_center.offset_top = free - need
+	else:
+		_center.offset_top = 0
+
+
+# The keyboard height changes while it slides in and out, and no signal reports it.
+func _process(_delta: float) -> void:
+	_fit_above_keyboard(float(DisplayServer.virtual_keyboard_get_height()) / get_window().content_scale_factor)
 
 
 func _confirm() -> void:
