@@ -38,6 +38,25 @@ func run(t: Node) -> void:
 	t.check("long chapter renders", page._text.get_paragraph_count() == 800, true)
 	var plain := page._text.text
 
+	# Follow scrolling is off while reading aloud is paused, on again once it resumes.
+	var saved_speech := [Speech.playing, Speech.paused, Speech.source_owner, Speech.items]
+	Speech.items = ReaderPage._speech_items(page._items)
+	Speech.source_owner = "reader"
+	Speech.playing = true
+	page.tts.highlight = 10
+	page.tts._spoken_para = 10
+	t.check("follow scrolls while reading", page.tts._follow_ready(10), true)
+	Speech.paused = true
+	t.check("no follow scroll while paused", page.tts._follow_ready(10), false)
+	Speech.paused = false
+	t.check("follow scrolls again after resume", page.tts._follow_ready(10), true)
+	page.tts.highlight = -1
+	page.tts._spoken_para = -1
+	Speech.playing = saved_speech[0]
+	Speech.paused = saved_speech[1]
+	Speech.source_owner = saved_speech[2]
+	Speech.items = saved_speech[3]
+
 	# Paragraph highlight through the incremental path matches a full render.
 	page.tts.set_highlight(5)
 	var full := page._text.text

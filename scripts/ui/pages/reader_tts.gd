@@ -310,9 +310,10 @@ func _anchor(para: int, chunk: int) -> void:
 		from = at + _chunks[k].length()
 
 
-## Whether a follow scroll for `para` is wanted right now at all.
+## Whether a follow scroll for `para` is wanted right now at all. Never while
+## paused: the view stays wherever the reader scrolled it until playback resumes.
 func _follow_ready(para: int) -> bool:
-	return (Settings.get_value("tts_follow") and Speech.playing
+	return (Settings.get_value("tts_follow") and Speech.is_active()
 		and Speech.source_owner == "reader" and Speech.items.size() == page._items.size()
 		and para == highlight and para == _spoken_para
 		and page.is_inside_tree() and page._read_view.visible)
