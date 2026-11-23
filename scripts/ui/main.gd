@@ -1,13 +1,16 @@
 extends Control
-## App shell: primary navigation in a left sidebar, secondary navigation
-## (page tabs + actions) in the top bar, and the active page below. On narrow
-## screens the sidebar becomes a drawer opened from a menu button.
+## App shell: primary navigation in a left sidebar, secondary navigation in a
+## top bar or short-landscape rail, and the active page below. On narrow screens
+## the sidebar becomes a drawer opened from a menu button.
 
 const COMPACT_WIDTH := 820.0
+const RAIL_MAX_HEIGHT := 500.0
+const RAIL_WIDTH := 64.0
 
 var pages := {}
 var current: Page
 var compact := false
+var rail := false
 
 var _root: HBoxContainer
 var _sidebar: PanelContainer
@@ -26,6 +29,9 @@ var _bridge_row: VBoxContainer
 var _update_box: VBoxContainer
 var _topbar: PanelContainer
 var _top_rows: VBoxContainer
+var _rail_scroll: ScrollContainer
+var _rail_box: VBoxContainer
+var _rail_sep: ColorRect
 var _tab_strip: TabStrip
 var _tab_strip_page: Page
 var _host: Control
@@ -72,10 +78,35 @@ func _ready() -> void:
 	_topbar.add_child(_top_rows)
 	right.add_child(_topbar)
 	_topbar.item_rect_changed.connect(_on_topbar_moved)
+	var content := UI.hbox(0)
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	right.add_child(content)
+	_rail_scroll = ScrollContainer.new()
+	_rail_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_rail_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	_rail_scroll.custom_minimum_size.x = RAIL_WIDTH
+	_rail_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_rail_scroll.hide()
+	_rail_box = UI.vbox(2)
+	_rail_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_rail_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var rail_panel := UI.panel("Sidebar", _rail_box)
+	rail_panel.custom_minimum_size.x = RAIL_WIDTH
+	rail_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	rail_panel.add_theme_stylebox_override("panel", UiTheme.box(UiTheme.SIDEBAR, 0, Color.TRANSPARENT, 0, Vector4(4, 4, 4, 4)))
+	_rail_scroll.add_child(rail_panel)
+	content.add_child(_rail_scroll)
+	_rail_sep = ColorRect.new()
+	_rail_sep.color = UiTheme.BORDER
+	_rail_sep.custom_minimum_size.x = 1
+	_rail_sep.hide()
+	content.add_child(_rail_sep)
 	_host = Control.new()
+	_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_host.clip_contents = true
-	right.add_child(_host)
+	content.add_child(_host)
 
 	_drawer = Control.new()
 	_drawer.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -293,8 +324,16 @@ func toast(message: String, kind := "info") -> void:
 func _build_sidebar() -> PanelContainer:
 	var side := UI.panel("Sidebar")
 	side.custom_minimum_size.x = 236
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	side.add_child(scroll)
 	var col := UI.vbox(4)
-	side.add_child(col)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.add_child(col)
 
 	var logo := PanelContainer.new()
 	logo.add_theme_stylebox_override("panel", UiTheme.box(Color("#0284c7"), 9))
@@ -441,7 +480,7 @@ func _refresh_listening() -> void:
 	var show := _listen_button_wanted()
 	if is_instance_valid(_top_listen) and _top_listen.visible != show:
 		_top_listen.visible = show
-		if not _top_holes().is_empty():
+		if not rail_active() and not _top_holes().is_empty():
 			_rebuild_topbar.call_deferred()  # the row's fit around the hole changed
 	if not show:
 		return
@@ -542,14 +581,16 @@ func _refresh_bridge() -> void:
 
 func _on_resize() -> void:
 	_update_safe_area()
-	var w := get_viewport_rect().size.x
-	var c := w < COMPACT_WIDTH
+	var viewport := get_viewport_rect().size
+	var r := viewport.y < RAIL_MAX_HEIGHT and viewport.x > viewport.y
+	var c := r or viewport.x < COMPACT_WIDTH
 	if _drawer.visible:
 		_sidebar.size.x = _drawer_width()
-	if c == compact and _laid_out:
+	if c == compact and r == rail and _laid_out:
 		return
 	_laid_out = true
 	compact = c
+	rail = r
 	close_drawer(false)
 	# Wide: sidebar sits in the layout. Compact: it lives in the drawer overlay.
 	var parent: Control = _drawer if compact else _root
@@ -615,7 +656,7 @@ func _top_holes() -> Array[Rect2]:
 
 
 func _on_topbar_moved() -> void:
-	if _top_holes().is_empty():
+	if rail_active() or _top_holes().is_empty():
 		return
 	if Vector2(_topbar.global_position.x, _topbar.size.x) != _bar_span:
 		_rebuild_topbar.call_deferred()
@@ -802,6 +843,18 @@ func close_drawer(animate := true) -> void:
 func _rebuild_topbar() -> void:
 	if current == null:
 		return
+	var use_rail := rail_active()
+	_topbar.visible = not use_rail
+	_rail_scroll.visible = use_rail
+	_rail_sep.visible = use_rail
+	if use_rail:
+		_tab_strip = null
+		_top_listen = null
+		UI.clear(_top_rows)
+		_rebuild_rail()
+		_refresh_listening()
+		return
+	UI.clear(_rail_box)
 	# A page may reuse a control in the new bar (the library's filter box), so
 	# give focus back to it afterwards: typing there mustn't stop mid-word.
 	var focus := get_viewport().gui_get_focus_owner()
@@ -910,6 +963,88 @@ func _rebuild_topbar() -> void:
 		_fit_search_box()
 		_fit_search_box.call_deferred()
 	_refresh_listening()
+
+
+func rail_active() -> bool:
+	return rail and current != null and current.supports_rail()
+
+
+func _rebuild_rail() -> void:
+	UI.clear(_rail_box)
+	_top_listen = null
+	var menu := rail_button("menu", "Menu", open_drawer)
+	_rail_box.add_child(menu)
+	if current.has_back():
+		_rail_box.add_child(rail_button("arrow_left", "Back", current.go_back))
+	var names := current.tabs()
+	if not names.is_empty():
+		_rail_box.add_child(_rail_tab_picker(names))
+	_rail_box.add_child(UI.spacer(false))
+	var actions := UI.hbox(0)
+	current.build_actions(actions)
+	for c: Control in actions.get_children():
+		actions.remove_child(c)
+		c.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		c.custom_minimum_size = c.custom_minimum_size.max(Vector2(40, 40))
+		_rail_box.add_child(c)
+	actions.free()
+	current.build_rail_extras(_rail_box)
+	_top_listen = rail_button("headphones", _listening_title(), show_listening)
+	_top_listen.icon = Icons.get_icon("headphones", UiTheme.ACCENT, 20)
+	_top_listen.visible = _listen_button_wanted()
+	_rail_box.add_child(_top_listen)
+
+
+func rail_button(icon: String, tip: String, callback: Callable) -> Button:
+	var b := UI.icon_button(icon, tip, callback)
+	b.custom_minimum_size = Vector2(40, 40)
+	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	return b
+
+
+func _rail_tab_picker(names: PackedStringArray) -> Button:
+	var selected := clampi(current.tab, 0, names.size() - 1)
+	var name := names[selected]
+	var icons := current.tab_icons()
+	var icon := icons[selected] if icons.size() == names.size() else "list"
+	var b := UI.button(name, icon, "GhostButton")
+	b.custom_minimum_size = Vector2(RAIL_WIDTH - 8, 48)
+	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	b.clip_text = true
+	b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	b.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP
+	b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.add_theme_font_size_override("font_size", 10)
+	var normal := UiTheme.box(Color.TRANSPARENT, 8, Color.TRANSPARENT, 0, Vector4(2, 4, 2, 4))
+	var hover := UiTheme.box(UiTheme.SURFACE_2, 8, Color.TRANSPARENT, 0, Vector4(2, 4, 2, 4))
+	var selected_style := UiTheme.box(UiTheme.ACCENT_DIM, 8, Color.TRANSPARENT, 0, Vector4(2, 4, 2, 4))
+	for state in ["normal", "hover", "pressed", "hover_pressed"]:
+		b.add_theme_stylebox_override(state, normal if state == "normal" else hover if state == "hover" else selected_style)
+	b.tooltip_text = name
+	b.pressed.connect(func(): _show_tab_picker(b, names))
+	return b
+
+
+func _show_tab_picker(anchor: Control, names: PackedStringArray) -> void:
+	var list := UI.vbox(2)
+	list.custom_minimum_size.x = 220
+	var title := UI.label(current.page_title(), "H3")
+	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	list.add_child(title)
+	var pop := Popover.show_for(anchor, list)
+	var icons := current.tab_icons()
+	for i in names.size():
+		var index := i
+		var icon := icons[index] if icons.size() == names.size() else ""
+		var choice := UI.button(names[index], icon, "GhostButton", func():
+			pop.close()
+			current.select_tab(index)
+			_refresh_listening()
+			_rebuild_topbar())
+		choice.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		choice.custom_minimum_size.y = 40
+		list.add_child(choice)
 
 
 ## Frees room for overflowing tabs by shrinking the page's search field to an

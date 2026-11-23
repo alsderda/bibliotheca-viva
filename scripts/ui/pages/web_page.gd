@@ -86,6 +86,10 @@ func page_title() -> String:
 	return "Web"
 
 
+func supports_rail() -> bool:
+	return false
+
+
 func build_actions(bar: HBoxContainer) -> void:
 	bar.add_child(UI.icon_button("arrow_left", "Back", func(): _eval("history.back()")))
 	bar.add_child(UI.icon_button("arrow_right" if Icons.PATHS.has("arrow_right") else "chev_right", "Forward", func(): _eval("history.forward()")))

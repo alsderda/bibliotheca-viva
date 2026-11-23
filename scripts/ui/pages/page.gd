@@ -1,7 +1,6 @@
 class_name Page
 extends Control
-## Base class for main-area pages. The shell reads title/tabs/actions from the
-## page to build the top bar (secondary navigation).
+## Base class for main-area pages and their secondary-navigation hooks.
 
 signal header_changed
 
@@ -20,6 +19,10 @@ func title_control() -> Control:
 
 
 func tabs() -> PackedStringArray:
+	return []
+
+
+func tab_icons() -> PackedStringArray:
 	return []
 
 
@@ -42,6 +45,14 @@ func select_tab(i: int) -> void:
 
 
 func build_actions(_bar: HBoxContainer) -> void:
+	pass
+
+
+func supports_rail() -> bool:
+	return true
+
+
+func build_rail_extras(_box: VBoxContainer) -> void:
 	pass
 
 
