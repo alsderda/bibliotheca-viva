@@ -160,22 +160,22 @@ func run(t: Node) -> void:
 
 	# Contents tab: a long chapter list is split into collapsible groups, with
 	# only the current chapter's group expanded and the rest built on first open.
-	var contents := ReaderPage.new()
-	t.add_child(contents)
+	var contents_page := ReaderPage.new()
+	t.add_child(contents_page)
 	var chapters := []
 	for i in 230:
 		chapters.append({"title": "Chapter %d" % (i + 1)})
-	contents.book = {"id": "contents-check", "title": "Made-Up Serial", "author": "", "kind": "epub",
+	contents_page.book = {"id": "contents-check", "title": "Made-Up Serial", "author": "", "kind": "epub",
 		"chapters": chapters, "progress": {"chapter": 120, "paragraph": 0}, "last_read": 1}
-	contents.chapter = 120
-	contents._build_contents()
+	contents_page.chapter = 120
+	contents_page.contents.build()
 	var titles := PackedStringArray()
 	for c in chapters:
 		titles.append(c.title)
 	var groups := BookGroups.split(titles, int(Settings.get_value("contents_group_size")))
 	var headers: Array = []
 	var boxes: Array = []
-	var rows := contents._contents_list.get_children()
+	var rows := contents_page.contents.list.get_children()
 	for i in rows.size():
 		if rows[i] is Button and rows[i].has_meta("group_start"):
 			headers.append(rows[i])
@@ -209,7 +209,7 @@ func run(t: Node) -> void:
 			(headers[other] as Button).pressed.emit()
 			t.check("toggling a group fills it in place", box.visible
 				and box.get_child_count() == int(groups[other].end) - int(groups[other].start)
-				and contents._contents_list.get_children().size() == rows.size()
+				and contents_page.contents.list.get_children().size() == rows.size()
 				and (boxes[cur] as Control).visible, true)
 			(headers[other] as Button).pressed.emit()
 			t.check("toggling again collapses the group", not box.visible, true)
@@ -247,7 +247,7 @@ func run(t: Node) -> void:
 	page._on_scrolled(0.0)
 	t.check("scrolling hides the selection bar", page._sel_bar.visible, false)
 	bar.queue_free()
-	contents.queue_free()
+	contents_page.queue_free()
 	page.queue_free()
 	await t.get_tree().process_frame
 	await run_follow_checks(t)
