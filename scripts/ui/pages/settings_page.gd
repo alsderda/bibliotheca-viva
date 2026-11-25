@@ -543,7 +543,7 @@ func _tags() -> void:
 	add.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	intro.add_child(add)
 	_content.add_child(UI.panel("Card", intro))
-	var groups := Library.clean_aliases(Settings.get_value("tag_aliases"))
+	var groups := BookTags.clean_aliases(Settings.get_value("tag_aliases"))
 	var list := UI.vbox(4)
 	for i in groups.size():
 		var g: Dictionary = groups[i]
@@ -582,10 +582,10 @@ func _alias_row(tag_text: String, alias_text: String, is_draft: bool, index: int
 		tag.text_changed.connect(func(t): (_alias_drafts[index] as Dictionary).tag = t)
 		alias.text_changed.connect(func(t): (_alias_drafts[index] as Dictionary).aliases = t)
 	_alias_rows.append([tag, alias])
-	var tag_suggest := TagSuggest.attach(tag, func(): return [Library.book_tags(), _alias_skip(tag, false)], true)
+	var tag_suggest := TagSuggest.attach(tag, func(): return [BookTags.book_tags(), _alias_skip(tag, false)], true)
 	tag_suggest.only_while_focused = true
 	tag_suggest.completed.connect(func(_t): _save_aliases())
-	var alias_suggest := TagSuggest.attach(alias, func(): return [Library.book_tags(), _alias_skip(alias, true)])
+	var alias_suggest := TagSuggest.attach(alias, func(): return [BookTags.book_tags(), _alias_skip(alias, true)])
 	alias_suggest.only_while_focused = true
 	alias_suggest.completed.connect(func(_t): _save_aliases())
 	var delete := UI.icon_button("trash", "Delete", func(): _delete_alias(index, is_draft))
@@ -614,7 +614,7 @@ func _alias_skip(edit: LineEdit, include_own_main: bool) -> Array:
 		for c in row.size():
 			if i == own and (not include_own_main or c > 0):
 				continue
-			skip.append_array(Library.clean_tags(Array(str((row[c] as LineEdit).text).split(","))))
+			skip.append_array(BookTags.clean_tags(Array(str((row[c] as LineEdit).text).split(","))))
 	return skip
 
 
@@ -646,7 +646,7 @@ func _save_aliases_now() -> void:
 	var groups := []
 	for r in _alias_rows:
 		groups.append({"tag": (r[0] as LineEdit).text, "aliases": (r[1] as LineEdit).text})
-	var cleaned: Array = Library.clean_aliases(groups)
+	var cleaned: Array = BookTags.clean_aliases(groups)
 	var kept := []
 	var first_draft := _alias_rows.size() - _alias_drafts.size()
 	for i in _alias_drafts.size():
@@ -675,11 +675,11 @@ func _delete_alias(index: int, is_draft: bool) -> void:
 			_alias_drafts.remove_at(index)
 			_rebuild_keep_scroll()
 		return
-	var groups := Library.clean_aliases(Settings.get_value("tag_aliases"))
+	var groups := BookTags.clean_aliases(Settings.get_value("tag_aliases"))
 	if index < 0 or index >= groups.size():
 		return
 	groups.remove_at(index)
-	Settings.set_value("tag_aliases", Library.clean_aliases(groups))
+	Settings.set_value("tag_aliases", BookTags.clean_aliases(groups))
 
 
 ## True when cleaning dropped a main tag or alias the user typed, so the save
@@ -715,12 +715,12 @@ func _aliases_dropped(groups: Array, cleaned: Array) -> bool:
 ## Library tags that are in no alias group yet, as main tag or alias.
 func _ungrouped_tags() -> Array:
 	var grouped := {}
-	for g in Library.clean_aliases(Settings.get_value("tag_aliases")):
+	for g in BookTags.clean_aliases(Settings.get_value("tag_aliases")):
 		grouped[_norm_tag(g.tag)] = true
 		for t in g.aliases:
 			grouped[_norm_tag(t)] = true
 	var out := []
-	for t in Library.book_tags():
+	for t in BookTags.book_tags():
 		if not grouped.has(_norm_tag(str(t))):
 			out.append(str(t))
 	return out

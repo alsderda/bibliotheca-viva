@@ -1454,7 +1454,7 @@ func _append_from_file(path: String) -> void:
 	if fresh.is_empty():
 		main.toast("This book already has all of the EPUB's chapters", "warn")
 		return
-	if not Library.same_series(book, parsed):
+	if not EpubMatch.same_series(book, parsed):
 		ConfirmDialog.open(main, {
 			"title": "Add chapters from a different book?",
 			"text": "The EPUB is “%s”%s, not “%s”. Add its %d chapter(s) to the end of this book anyway?" % [

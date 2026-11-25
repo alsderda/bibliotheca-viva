@@ -288,7 +288,7 @@ func _filtered() -> Array:
 			continue
 		if _source != "" and b.source != _source:
 			continue
-		if _tag != "" and not Library.matches_tag(b, _tag):
+		if _tag != "" and not BookTags.matches_tag(b, _tag):
 			continue
 		if not _plugin_filters.is_empty() and not _plugin_match(b):
 			continue
@@ -357,7 +357,7 @@ func _filters_active() -> bool:
 
 ## Opens the library showing every book with a tag (from a tag on a book's Details tab).
 func show_tag(tag: String) -> void:
-	_tag = Library.main_tag(tag)
+	_tag = BookTags.main_tag(tag)
 	tab = ALL_TAB
 	_filter_text = ""
 	_source = ""
@@ -383,7 +383,7 @@ func _filter_row() -> Control:
 		if _archive_hides(b):
 			continue
 		sources[b.source] = true
-	var every := Library.all_tags()
+	var every := BookTags.all_tags()
 	if sources.size() < 2 and _source == "" and every.is_empty() and _tag == "":
 		return null
 	var names := {}
@@ -412,7 +412,7 @@ func _filter_row() -> Control:
 			header_changed.emit()
 			_rebuild())
 		row.add_child(pick)
-	var tags := Library.all_tags(_source)
+	var tags := BookTags.all_tags(_source)
 	if not tags.is_empty() or _tag != "":
 		row.add_child(_tag_pick(tags))
 

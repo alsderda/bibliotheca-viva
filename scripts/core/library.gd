@@ -10,7 +10,7 @@ extends Node
 ##
 ## Book dictionary:
 ##   id, title, author, kind ("epub" | "txt" | "web"), source ("file" | "web" | the id of the plugin that fetches it),
-##   url, cover (path or ""), cover_set (unix time the cover was picked by hand, else 0), cover_url, synopsis, tags, tags_set (true once the reader changed a plugin book's tags by hand, see picker_tags), rss_only, extra (the plugin's own data, see SourcePlugin),
+##   url, cover (path or ""), cover_set (unix time the cover was picked by hand, else 0), cover_url, synopsis, tags, tags_set (true once the reader changed a plugin book's tags by hand, see BookTags.picker_tags), rss_only, extra (the plugin's own data, see SourcePlugin),
 ##   total_words (the book's length as the site reports it, 0 if unknown),
 ##   chapters: [{title, url, date, words}] (words: set once the chapter's full text is saved), progress: {chapter, paragraph}, added, last_read, last_checked,
 ##   last_full_check (unix time of the last update check that read the book's full chapter list, 0 = never; see Sources._refresh),
@@ -46,14 +46,11 @@ var _flush_queued := false
 ## damaged): kept out of `books` but written back unchanged by flush(), so a
 ## book the app can't read is never forgotten by the next save.
 var _kept: Array = []
-## Lowercase alias -> main tag from the "tag_aliases" setting; null until needed.
-## Cached because matches_tag runs once per book on every filter pass.
-var _aliases_cache: Variant = null
 
 
 func _ready() -> void:
 	# Connected before any page, so pages that rebuild on this change see the new aliases.
-	Settings.changed.connect(func(k): if k == "tag_aliases": _aliases_cache = null)
+	Settings.changed.connect(func(k): if k == "tag_aliases": BookTags.clear_alias_cache())
 	_load()
 	_count_missing_words.call_deferred()
 
@@ -420,8 +417,8 @@ func replace_chapters(id: String, new_chapters: Array) -> void:
 	if b.is_empty():
 		return
 	var dir := book_dir(id)
-	var moves := _chapter_moves(b.chapters, new_chapters)
-	if moves.is_empty() and _chapter_files(dir).is_empty():
+	var moves := ChapterMoves.chapter_moves(b.chapters, new_chapters)
+	if moves.is_empty() and ChapterMoves.chapter_files(dir).is_empty():
 		_apply_chapter_list(b, new_chapters)
 		return
 	var staging := dir + "/staging"
@@ -445,53 +442,10 @@ func replace_chapters(id: String, new_chapters: Array) -> void:
 			DirAccess.rename_absolute(src, dst)
 		elif not staged.has(mv[0]):
 			DirAccess.remove_absolute(dst)  # never downloaded: no text may stay under its index
-	_drop_unkept_chapters(dir, moves)
+	ChapterMoves.drop_unkept_chapters(dir, moves)
 	_apply_chapter_list(b, new_chapters)
 	flush()  # the new list is durable before its staging goes away
 	_remove_dir(staging)
-
-
-## Which old chapter indexes carry over to which new ones, matched by chapter
-## link; each kept chapter's word count moves onto its new entry. Moves that
-## overlap (old 2 -> new 3 while old 3 -> new 2) are safe: nothing is renamed
-## onto a file that still has to move.
-static func _chapter_moves(old_chapters: Array, new_chapters: Array) -> Array:
-	var moves := []
-	for old_i in old_chapters.size():
-		var key := chapter_key(str(old_chapters[old_i].get("url", "")))
-		for new_i in new_chapters.size():
-			if chapter_key(str(new_chapters[new_i].get("url", ""))) == key:
-				moves.append([old_i, new_i])
-				if (old_chapters[old_i] as Dictionary).has("words"):
-					new_chapters[new_i].words = old_chapters[old_i].words
-				break
-	return moves
-
-
-## The book folder's chapter file indexes: every <int>.json in it, nothing else.
-static func _chapter_files(dir: String) -> Array:
-	var out := []
-	var d := DirAccess.open(dir)
-	if d == null:
-		return out
-	for f in d.get_files():
-		if f.ends_with(".json") and f.get_basename().is_valid_int():
-			out.append(f.get_basename().to_int())
-	return out
-
-
-## Deletes the book folder's chapter files no move targets: chapters that are
-## really gone (and stale files past the list). Only <int>.json files.
-static func _drop_unkept_chapters(dir: String, moves: Array) -> void:
-	var keep := {}
-	for mv in moves:
-		keep[int(mv[1])] = true
-	var d := DirAccess.open(dir)
-	if d == null:
-		return
-	for f in d.get_files():
-		if f.ends_with(".json") and f.get_basename().is_valid_int() and not keep.has(f.get_basename().to_int()):
-			d.remove(f)
 
 
 ## Points a book at its new chapter list, carrying progress and bookmarks over
@@ -547,7 +501,7 @@ func _recover_replace(id: String) -> void:
 	var was_staged := {}
 	for o in plan.get("staged", []):
 		was_staged[int(o)] = true
-	var moves := _chapter_moves(b.chapters, new_chapters)
+	var moves := ChapterMoves.chapter_moves(b.chapters, new_chapters)
 	for mv in moves:
 		if mv[0] == mv[1]:
 			continue
@@ -558,7 +512,7 @@ func _recover_replace(id: String) -> void:
 		elif not was_staged.has(mv[0]):
 			DirAccess.remove_absolute(dst)  # never downloaded: no text may stay under its index
 		# else already moved into place: keep it
-	_drop_unkept_chapters(dir, moves)
+	ChapterMoves.drop_unkept_chapters(dir, moves)
 	_apply_chapter_list(b, new_chapters)
 	flush()
 	_remove_dir(staging)
@@ -637,195 +591,12 @@ func edit_details(id: String, fields: Dictionary) -> String:
 		if fields.has(f) and f in allowed:
 			out[f] = str(fields[f]).strip_edges()
 	if fields.has("tags") and "tags" in allowed:
-		out.tags = clean_tags(fields.tags)
+		out.tags = BookTags.clean_tags(fields.tags)
 		if not is_file_book(b) and out.tags != b.get("tags", []):
 			out.tags_set = true
 	sync_key(b)  # assigned from the title, so fix it before that changes
 	update_book(id, out)
 	return ""
-
-
-## Tags without blanks, extra spaces or repeats (ignoring case), from an Array
-## or comma-separated text: "Fantasy, litrpg ,, fantasy" -> ["Fantasy", "litrpg"].
-static func clean_tags(tags: Variant) -> Array:
-	var list: Array = tags if tags is Array else str(tags).split(",")
-	var out := []
-	var seen := {}
-	for t in list:
-		var tag := HtmlText._re("\\s+").sub(str(t), " ", true).strip_edges()
-		if tag != "" and not seen.has(tag.to_lower()):
-			seen[tag.to_lower()] = true
-			out.append(tag)
-	return out
-
-
-## True when a book has the tag, ignoring case.
-static func has_tag(book: Dictionary, tag: String) -> bool:
-	for t in book.get("tags", []):
-		if str(t).to_lower() == tag.to_lower():
-			return true
-	return false
-
-
-## True when a book has the tag or its plugin offers the tag for it in the Tag
-## picker (see picker_tags), counting an alias as its main tag and ignoring case.
-func matches_tag(book: Dictionary, tag: String) -> bool:
-	var to_main := _alias_map()
-	var want := str(to_main.get(tag.to_lower(), tag)).to_lower()
-	for t in book.get("tags", []):
-		if str(to_main.get(str(t).to_lower(), t)).to_lower() == want:
-			return true
-	for t in picker_tags(book):
-		if str(to_main.get(str(t).to_lower(), t)).to_lower() == want:
-			return true
-	return false
-
-
-func _alias_map() -> Dictionary:
-	if _aliases_cache == null:
-		var to_main := {}
-		for g in clean_aliases(Settings.get_value("tag_aliases")):
-			for a in g.aliases:
-				to_main[str(a).to_lower()] = g.tag
-		_aliases_cache = to_main
-	return _aliases_cache
-
-
-## The tags the Tag picker offers for a book: its own, or what its plugin picks
-## (SourcePlugin.library_tags) unless the reader set the book's tags by hand.
-func picker_tags(book: Dictionary) -> Array:
-	var p := Plugins.get_plugin(str(book.get("source", "")))
-	return p.library_tags(book) if p and not book.get("tags_set", false) else book.get("tags", [])
-
-
-## Every tag the Tag picker offers, each replaced by its main tag (see
-## clean_aliases), sorted, each once (ignoring case). With a source (a plugin
-## id, "web" or "file"), only the tags of that source's books.
-func all_tags(source := "") -> Array:
-	var to_main := _alias_map()
-	var all := []
-	for b in books:
-		if source != "" and str(b.get("source", "")) != source:
-			continue
-		for t in picker_tags(b):
-			all.append(to_main.get(str(t).to_lower(), t))
-	var out := clean_tags(all)
-	out.sort_custom(func(a, c): return a.naturalnocasecmp_to(c) < 0)
-	return out
-
-
-## Every tag the books themselves have (not just those the Tag picker offers),
-## sorted, each once (ignoring case).
-func book_tags() -> Array:
-	return _sorted_tags(func(b): return b.get("tags", []))
-
-
-func _sorted_tags(tags_of: Callable) -> Array:
-	var all := []
-	for b in books:
-		all.append_array(tags_of.call(b))
-	var out := clean_tags(all)
-	out.sort_custom(func(a, c): return a.naturalnocasecmp_to(c) < 0)
-	return out
-
-
-## Tag alias groups cleaned for saving under the "tag_aliases" setting: an
-## Array of {"tag": main tag, "aliases": [tags]} (tags cleaned as clean_tags
-## does). Drops groups with no main tag and repeats of a main tag (ignoring
-## case; the first group wins). Drops an alias that is its own group's main
-## tag, any group's main tag, or already an alias in an earlier group, so an
-## alias always leads to one main tag in one step. Keeps groups with no aliases
-## left. Accepts aliases as an Array or comma-separated text.
-static func clean_aliases(groups: Variant) -> Array:
-	if not (groups is Array):
-		return []
-	var items: Array = groups
-	var main_seen := {}
-	for g in items:
-		if not (g is Dictionary) or not g.has("tag"):
-			continue
-		var main := HtmlText._re("\\s+").sub(str(g.get("tag", "")), " ", true).strip_edges()
-		if main != "" and not main_seen.has(main.to_lower()):
-			main_seen[main.to_lower()] = true
-	var claimed := {}
-	var emitted := {}
-	var out := []
-	for g in items:
-		if not (g is Dictionary) or not g.has("tag"):
-			continue
-		var main := HtmlText._re("\\s+").sub(str(g.get("tag", "")), " ", true).strip_edges()
-		if main == "" or emitted.has(main.to_lower()):
-			continue
-		emitted[main.to_lower()] = true
-		var aliases := []
-		for a in clean_tags(g.get("aliases", [])):
-			var low := str(a).to_lower()
-			if low == main.to_lower() or main_seen.has(low) or claimed.has(low):
-				continue
-			claimed[low] = true
-			aliases.append(a)
-		out.append({"tag": main, "aliases": aliases})
-	return out
-
-
-## The main tag that `tag` is an alias of in `groups` (as clean_aliases returns
-## them), spelled as the group spells it, ignoring case. A tag that is no alias
-## comes back unchanged; so does a main tag.
-static func resolve_tag(groups: Array, tag: String) -> String:
-	var low := tag.to_lower()
-	for g in groups:
-		if not (g is Dictionary):
-			continue
-		var main := str(g.get("tag", ""))
-		if main == "" or main.to_lower() == low:
-			continue
-		var raw: Variant = g.get("aliases", [])
-		if not (raw is Array):
-			continue
-		var aliases: Array = raw
-		for a in aliases:
-			if str(a).to_lower() == low:
-				return main
-	return tag
-
-
-## resolve_tag with the "tag_aliases" setting.
-func main_tag(tag: String) -> String:
-	return resolve_tag(clean_aliases(Settings.get_value("tag_aliases")), tag)
-
-
-## The aliases of a main tag in the "tag_aliases" setting, ignoring case; []
-## when it has none.
-func aliases_of(tag: String) -> Array:
-	for g in clean_aliases(Settings.get_value("tag_aliases")):
-		if str(g.get("tag", "")).to_lower() == tag.to_lower():
-			var aliases: Array = g.get("aliases", [])
-			return aliases.duplicate()
-	return []
-
-
-## Tags from `all` that complete what's been typed so far, ignoring case: those
-## starting with it first, then those with a word starting with it, then those
-## containing it. Skips tags in `have` and the typed tag itself once it's
-## complete. With nothing typed, every tag not in `have`.
-static func match_tags(all: Array, have: Array, typed: String) -> Array:
-	var low := typed.strip_edges().to_lower()
-	var skip := {}
-	for t in have:
-		skip[str(t).to_lower()] = true
-	var ranked := [[], [], []]
-	for t in all:
-		var tag := str(t)
-		var lt := tag.to_lower()
-		if skip.has(lt) or tag == typed.strip_edges():
-			continue
-		if low == "" or lt.begins_with(low):
-			ranked[0].append(tag)
-		elif (" " + lt).contains(" " + low) or ("-" + lt).contains("-" + low):
-			ranked[1].append(tag)
-		elif lt.contains(low):
-			ranked[2].append(tag)
-	return ranked[0] + ranked[1] + ranked[2]
 
 
 # --- import ------------------------------------------------------------------
@@ -893,7 +664,7 @@ func read_epub_for(id: String, path: String) -> Dictionary:
 	var parsed := read_file(path)
 	if parsed.has("error"):
 		return parsed
-	var epub_url := _epub_book_url(parsed)
+	var epub_url := EpubMatch.epub_book_url(parsed)
 	if epub_url != "" and b.url != "" and book_key(epub_url) != book_key(b.url):
 		return {"error": "This EPUB is of a different book (%s)" % parsed.title}
 	return parsed
@@ -909,38 +680,18 @@ static func is_file_book(book: Dictionary) -> bool:
 
 
 ## The imported book that a file read with read_file looks like a later part of
-## (see same_series), the most recently used one if several. {} if none.
+## (see EpubMatch.same_series), the most recently used one if several. {} if none.
 func find_series_book(parsed: Dictionary) -> Dictionary:
 	var best := {}
 	for b in books:
-		if is_file_book(b) and same_series(b, parsed):
+		if is_file_book(b) and EpubMatch.same_series(b, parsed):
 			if best.is_empty() or maxf(b.last_read, b.added) > maxf(best.last_read, best.added):
 				best = b
 	return best
 
 
-## True when a book and a file have the same title, ignoring case, punctuation
-## and a chapter range at the end ("The Path of Ascension - c486-496"), and the
-## same author unless one of them has none.
-static func same_series(book: Dictionary, parsed: Dictionary) -> bool:
-	var a := _title_key(series_title(book.title))
-	if a == "" or a != _title_key(series_title(parsed.get("title", ""))):
-		return false
-	var x := _title_key(book.get("author", ""))
-	var y := _title_key(parsed.get("author", ""))
-	return x == "" or y == "" or x == y
-
-
-## A book's title without a chapter range or part number at the end:
-## "Title - c486-496", "Title (Chapters 1-50)", "Title, Vol. 2" -> "Title".
-static func series_title(title: String) -> String:
-	var re := HtmlText._re("(?i)[\\s,:;\\-–—(\\[]+(?:c|ch|chs|chap|chapters?|vol|volumes?|books?|parts?|#)?\\.?\\s*\\d+(?:\\s*(?:-|–|—|to)\\s*\\d+)?\\s*[)\\]]?\\s*$")
-	var t := re.sub(title, "").strip_edges()
-	return t if t != "" else title
-
-
 ## The chapters of a file read with read_file that a book doesn't have yet (see
-## unseen_chapters), compared with the text it has stored.
+## EpubMatch.unseen_chapters), compared with the text it has stored.
 func new_chapters_for(id: String, parsed: Dictionary) -> Array:
 	var b := get_book(id)
 	if b.is_empty():
@@ -948,66 +699,7 @@ func new_chapters_for(id: String, parsed: Dictionary) -> Array:
 	var texts := []
 	for i in b.chapters.size():
 		texts.append(load_chapter(id, i).get("paragraphs", []))
-	return unseen_chapters(b.chapters, texts, parsed.chapters, _title_key(series_title(b.title)))
-
-
-## The new chapters (from a loader) that aren't already among a book's chapters
-## (`have`, with their paragraphs in `have_text`), so a file that overlaps the
-## book adds only what comes after. A chapter is already there when one has
-## - its chapter number (see number_key; not one that several chapters have,
-##   like "Chapter 207 (1/2)" and "(2/2)"),
-## - or the same text (its longest paragraph, ignoring punctuation) and not
-##   another chapter number (a later chapter can repeat a passage),
-## - or, for a short page without much text, the same title.
-## `series`: the book's title as _title_key(series_title()), see number_key.
-static func unseen_chapters(have: Array, have_text: Array, chapters: Array, series := "") -> Array:
-	var numbers := {}  # number key -> how many chapters have it
-	var prints := {}
-	var titles := {}
-	for i in have.size():
-		var n := number_key(have[i].title, series)
-		if n != "":
-			numbers[n] = numbers.get(n, 0) + 1
-		titles[_title_key(have[i].title)] = true
-		var fp := _fingerprint(have_text[i] if i < have_text.size() else [])
-		if fp != "":
-			prints[fp] = n
-	var out := []
-	for c in chapters:
-		var n := number_key(c.title, series)
-		var fp := _fingerprint(c.paragraphs)
-		if n != "" and numbers.get(n, 0) == 1:
-			continue
-		if fp != "" and prints.has(fp) and (n == "" or prints[fp] == "" or prints[fp] == n):
-			continue
-		if fp == "" and titles.has(_title_key(c.title)):
-			continue
-		out.append(c)
-	return out
-
-
-## A chapter title's number with what comes before "Chapter" (a side story's
-## name, "Book 2"), except the book's own title: "Chapter 12" and "The Book
-## Chapter 12: Name" -> "|12", "Side Story Ch. 3" -> "sidestory|3", "12. Name"
-## -> "|12". "" if it has no number.
-static func number_key(title: String, series := "") -> String:
-	var m := HtmlText._re("(?i)^(.*?)\\b(?:chapter|chap|ch)\\.?\\s*(\\d+)(?!\\d)").search(title)
-	if m:
-		var before := _title_key(m.get_string(1))
-		return "%s|%d" % ["" if before == series else before, m.get_string(2).to_int()]
-	m = HtmlText._re("^\\s*(\\d+)(?!\\d)").search(title)
-	return "|%d" % m.get_string(1).to_int() if m else ""
-
-
-## A chapter's longest paragraph as letters and digits only, or "" when it's too
-## short to tell chapters apart by.
-static func _fingerprint(paragraphs: Array) -> String:
-	var best := ""
-	for p in paragraphs:
-		if not HtmlText.is_heading(p) and str(p).length() > best.length():
-			best = str(p)
-	var key := HtmlText._re("[^\\p{L}\\p{N}]+").sub(HtmlText.plain(best).to_lower(), "", true)
-	return key if key.length() >= 60 else ""
+	return EpubMatch.unseen_chapters(b.chapters, texts, parsed.chapters, EpubMatch.title_key(EpubMatch.series_title(b.title)))
 
 
 ## Adds chapters (from new_chapters_for) to the end of a book. Fills in the
@@ -1032,17 +724,6 @@ func append_chapters(id: String, parsed: Dictionary, chapters: Array) -> void:
 	changed.emit()
 
 
-## The link of the book an EPUB was made from: the one in its metadata, or else
-## the first link on its first page that a plugin knows as a book. "" if none.
-static func _epub_book_url(epub: Dictionary) -> String:
-	if epub.get("book_url", "") != "":
-		return epub.book_url
-	for link in epub.get("links", []):
-		if Plugins.book_key(link) != "":
-			return link
-	return ""
-
-
 ## Fills a web book's missing chapters from an EPUB of the same book (e.g. one
 ## made by WebToEpub), read with read_epub_for. Chapters are matched by their
 ## link when the EPUB has one, otherwise by title. Downloaded chapters are left
@@ -1053,7 +734,7 @@ func fill_from_epub(id: String, epub: Dictionary) -> Dictionary:
 	var b := get_book(id)
 	if b.is_empty():
 		return {"filled": 0, "matched": 0, "added": 0}
-	var at := _epub_match_indexes(b, epub.chapters)
+	var at := EpubMatch.epub_match_indexes(b, epub.chapters)
 	var filled := 0
 	var matched := 0
 	for k in at.size():
@@ -1073,12 +754,12 @@ func fill_from_epub(id: String, epub: Dictionary) -> Dictionary:
 
 
 ## Adds the EPUB chapters that matched none of a web book's chapters (`at`, see
-## _epub_match_indexes) and that it doesn't have under another title either (see
-## unseen_chapters), each right after the chapter before it in the EPUB, or
+## EpubMatch.epub_match_indexes) and that it doesn't have under another title either (see
+## EpubMatch.unseen_chapters), each right after the chapter before it in the EPUB, or
 ## first if none is. Pages before the first matched chapter (a title page, the
 ## book's description) are left out unless they have a chapter number, and so
 ## are short pages without a number ("Volume 2"). Their link is the EPUB's, or
-## else one made up from the title (see is_epub_only), so Sync and later
+## else one made up from the title (see EpubMatch.is_epub_only), so Sync and later
 ## refreshes know them. -> how many
 func _add_epub_only_chapters(id: String, epub_chapters: Array, at: Array) -> int:
 	var b := get_book(id)
@@ -1090,10 +771,10 @@ func _add_epub_only_chapters(id: String, epub_chapters: Array, at: Array) -> int
 	for k in at.size():
 		var c: Dictionary = epub_chapters[k]
 		seen_match = seen_match or at[k] >= 0
-		var numbered := number_key(c.title) != ""
-		if at[k] < 0 and (numbered or (seen_match and _fingerprint(c.paragraphs) != "")):
+		var numbered := EpubMatch.number_key(c.title) != ""
+		if at[k] < 0 and (numbered or (seen_match and EpubMatch.fingerprint(c.paragraphs) != "")):
 			unmatched.append(c)
-	var fresh := unseen_chapters(b.chapters, texts, unmatched, _title_key(series_title(b.title)))
+	var fresh := EpubMatch.unseen_chapters(b.chapters, texts, unmatched, EpubMatch.title_key(EpubMatch.series_title(b.title)))
 	if fresh.is_empty():
 		return 0
 	var list: Array = b.chapters.duplicate()  # the same dictionaries, so files and progress follow them
@@ -1110,7 +791,7 @@ func _add_epub_only_chapters(id: String, epub_chapters: Array, at: Array) -> int
 			var c: Dictionary = epub_chapters[k]
 			var url: String = c.get("url", "")
 			if url == "" or urls.has(chapter_key(url)):
-				var base := "epub:" + (_title_key(c.title) if _title_key(c.title) != "" else "chapter")
+				var base := "epub:" + (EpubMatch.title_key(c.title) if EpubMatch.title_key(c.title) != "" else "chapter")
 				url = base
 				var n := 2
 				while urls.has(chapter_key(url)):
@@ -1127,75 +808,6 @@ func _add_epub_only_chapters(id: String, epub_chapters: Array, at: Array) -> int
 	for a in added:
 		store_chapter(id, b.chapters.find_custom(func(c): return is_same(c, a[0])), a[0].title, PackedStringArray(a[1]))
 	return added.size()
-
-
-## True for a chapter added from an EPUB with no link of its own (see
-## _add_epub_only_chapters): it can't be downloaded again.
-static func is_epub_only(chapter: Dictionary) -> bool:
-	return str(chapter.get("url", "")).begins_with("epub:")
-
-
-## Pairs EPUB chapters with a book's chapters: -> [[book index, epub chapter]].
-## See _epub_match_indexes.
-static func match_epub_chapters(book: Dictionary, epub_chapters: Array) -> Array:
-	var at := _epub_match_indexes(book, epub_chapters)
-	var pairs := []
-	for k in at.size():
-		if at[k] >= 0:
-			pairs.append([at[k], epub_chapters[k]])
-	return pairs
-
-
-## For each EPUB chapter, the index of the book's chapter it is, or -1.
-## By link where the EPUB chapter has one; by title (ignoring case, punctuation
-## and a leading chapter number like "12. ") where it doesn't and exactly one
-## chapter has that title, unless the two start with different chapter numbers.
-## An EPUB chapter titled only "Chapter 12" (a title the tool that made it didn't
-## know) matches the one chapter numbered 12.
-static func _epub_match_indexes(book: Dictionary, epub_chapters: Array) -> Array:
-	var by_key := {}
-	var by_title := {}
-	var by_number := {}
-	for i in book.chapters.size():
-		var ch: Dictionary = book.chapters[i]
-		if ch.get("url", "") != "":
-			by_key[chapter_key(ch.url)] = i
-		var t := _title_key(ch.title)
-		by_title[t] = -1 if by_title.has(t) else i  # -1: more than one chapter has it
-		var n := HtmlText._re("(?i)^\\s*(?:chapter\\s+)?(\\d+)(?!\\d)").search(ch.title)
-		if n:
-			by_number[n.get_string(1).to_int()] = -1 if by_number.has(n.get_string(1).to_int()) else i
-	var out := []
-	var used := {}
-	for c in epub_chapters:
-		var i: int = -1
-		if c.get("url", "") != "":
-			i = by_key.get(chapter_key(c.url), -1)
-		else:
-			i = by_title.get(_title_key(c.title), -1)
-			if i >= 0 and _numbers_differ(c.title, book.chapters[i].title):
-				i = -1  # "30 - Home" isn't "167 - Home"
-			var placeholder := HtmlText._re("(?i)^\\s*chapter\\s+(\\d+)\\s*$").search(c.title)
-			if i < 0 and placeholder:
-				i = by_number.get(placeholder.get_string(1).to_int(), -1)
-		if i >= 0 and used.has(i):
-			i = -1
-		if i >= 0:
-			used[i] = true
-		out.append(i)
-	return out
-
-
-## True when both titles start with a chapter number and they aren't the same.
-static func _numbers_differ(a: String, b: String) -> bool:
-	var x := number_key(a)
-	var y := number_key(b)
-	return x != "" and y != "" and x != y
-
-
-static func _title_key(title: String) -> String:
-	var t := HtmlText._re("^\\s*\\d+\\s*[.):\\-–—]\\s*").sub(title.to_lower(), "")
-	return HtmlText._re("[^\\p{L}\\p{N}]+").sub(t, "", true)
 
 
 # --- persistence -------------------------------------------------------------
