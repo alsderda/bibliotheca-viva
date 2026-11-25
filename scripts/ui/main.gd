@@ -5,7 +5,6 @@ extends Control
 
 const COMPACT_WIDTH := 820.0
 const RAIL_MAX_HEIGHT := 500.0
-const RAIL_WIDTH := 64.0
 
 var pages := {}
 var current: Page
@@ -20,13 +19,8 @@ var _scrim: ColorRect
 var _drawer_tween: Tween
 var _top_listen: Button
 var _laid_out := false
-var _nav_buttons := {}
-var _nav_group := ButtonGroup.new()
-var _continue_box: Control
-var _continue_key := ""  # book id and chapter the Continue card shows
-var _listening_box: Control
-var _bridge_row: VBoxContainer
-var _update_box: VBoxContainer
+var _nav: NavSidebar
+var _fit: TopBarFit
 var _topbar: PanelContainer
 var _top_rows: VBoxContainer
 var _rail_scroll: ScrollContainer
@@ -37,16 +31,7 @@ var _tab_strip_page: Page
 var _host: Control
 var _toast_box: VBoxContainer
 var _sidebar_style: StyleBoxFlat
-
-## Screen edges covered by the camera hole or system bars, in UI units (x left,
-## y top, z right, w bottom). The background still runs under them; controls stay out.
-var _insets := Vector4.ZERO
-var _cutouts: Array[Rect2] = []  # camera holes, in UI units
-var _bar_span := Vector2(-1, -1)  # top bar x and width the camera-hole fit was made for
 var _icon_generation := 0  # pause/resume count; a resume redraws icons only if no pause came after it
-
-const TOP_ROW_HEIGHT := 60.0
-const HOLE_PAD := 8.0  # space kept between the camera hole and the buttons beside it
 
 
 func _ready() -> void:
@@ -61,7 +46,9 @@ func _ready() -> void:
 	_root = UI.hbox(0)
 	_root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(_root)
-	_sidebar = _build_sidebar()
+	_nav = NavSidebar.new(self)
+	_fit = TopBarFit.new(self)
+	_sidebar = _nav.build()
 	_root.add_child(_sidebar)
 	_sidebar_style = (_sidebar.get_theme_stylebox("panel") as StyleBoxFlat).duplicate()
 	_sidebar.add_theme_stylebox_override("panel", _sidebar_style)
@@ -77,7 +64,7 @@ func _ready() -> void:
 	_top_rows = UI.vbox(0)
 	_topbar.add_child(_top_rows)
 	right.add_child(_topbar)
-	_topbar.item_rect_changed.connect(_on_topbar_moved)
+	_topbar.item_rect_changed.connect(_fit.on_topbar_moved)
 	var content := UI.hbox(0)
 	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	content.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -85,14 +72,14 @@ func _ready() -> void:
 	_rail_scroll = ScrollContainer.new()
 	_rail_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_rail_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	_rail_scroll.custom_minimum_size.x = RAIL_WIDTH
+	_rail_scroll.custom_minimum_size.x = NavSidebar.RAIL_WIDTH
 	_rail_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_rail_scroll.hide()
 	_rail_box = UI.vbox(2)
 	_rail_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_rail_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var rail_panel := UI.panel("Sidebar", _rail_box)
-	rail_panel.custom_minimum_size.x = RAIL_WIDTH
+	rail_panel.custom_minimum_size.x = NavSidebar.RAIL_WIDTH
 	rail_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	rail_panel.add_theme_stylebox_override("panel", UiTheme.box(UiTheme.SIDEBAR, 0, Color.TRANSPARENT, 0, Vector4(4, 4, 4, 4)))
 	_rail_scroll.add_child(rail_panel)
@@ -144,13 +131,13 @@ func _ready() -> void:
 		_host.add_child(page)
 		pages[key] = page
 
-	Library.changed.connect(_refresh_continue)
+	Library.changed.connect(_nav.refresh_continue)
 	# Reading doesn't emit `changed`, so also redraw when the card would show another book or chapter.
-	Library.progress_changed.connect(_on_progress_changed)
-	Plugins.status_changed.connect(_refresh_bridge)
-	Plugins.changed.connect(_refresh_bridge)
+	Library.progress_changed.connect(_nav.on_progress_changed)
+	Plugins.status_changed.connect(_nav.refresh_bridge)
+	Plugins.changed.connect(_nav.refresh_bridge)
 	Plugins.message.connect(toast)
-	UpdateCheck.changed.connect(_refresh_update)
+	UpdateCheck.changed.connect(_nav.refresh_update)
 	Speech.state_changed.connect(func(_p): _refresh_listening())
 	Speech.paragraph_started.connect(func(_i): _refresh_listening())
 	get_viewport().size_changed.connect(_on_resize)
@@ -159,15 +146,15 @@ func _ready() -> void:
 		# after start-up, so check now and then too. It's a cheap call.
 		var t := Timer.new()
 		t.wait_time = 0.5
-		t.timeout.connect(_update_safe_area)
+		t.timeout.connect(_fit.update_safe_area)
 		add_child(t)
 		t.start()
-	_update_safe_area(true)
+	_fit.update_safe_area(true)
 	_on_resize()
 	navigate("library")
-	_refresh_continue()
-	_refresh_bridge()
-	_refresh_update()
+	_nav.refresh_continue()
+	_nav.refresh_bridge()
+	_nav.refresh_update()
 
 	if Array(OS.get_cmdline_user_args()).any(func(a): return a.begins_with("--zzshot=")): add_child(load("res://scripts/dev/zz_shot.gd").new())
 	if "--selftest" in OS.get_cmdline_user_args():
@@ -250,8 +237,8 @@ func navigate(key: String) -> void:
 	AppLog.info("ui", "page " + key)
 	page.show()
 	var nav := page.nav_key() if page.nav_key() != "" else key
-	if _nav_buttons.has(nav):
-		_nav_buttons[nav].button_pressed = true
+	if _nav.nav_buttons.has(nav):
+		_nav.nav_buttons[nav].button_pressed = true
 	page.select_tab(page.tab)
 	_rebuild_topbar()
 	page.on_shown()
@@ -319,116 +306,6 @@ func toast(message: String, kind := "info") -> void:
 	tw.tween_callback(p.queue_free)
 
 
-# --- sidebar (primary navigation) --------------------------------------------
-
-func _build_sidebar() -> PanelContainer:
-	var side := UI.panel("Sidebar")
-	side.custom_minimum_size.x = 236
-	var scroll := ScrollContainer.new()
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	side.add_child(scroll)
-	var col := UI.vbox(4)
-	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	col.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.add_child(col)
-
-	var logo := PanelContainer.new()
-	logo.add_theme_stylebox_override("panel", UiTheme.box(Color("#0284c7"), 9))
-	logo.custom_minimum_size = Vector2(34, 34)
-	var glyph := UI.icon("book", Color.WHITE, 20)
-	glyph.custom_minimum_size = Vector2(34, 34)
-	logo.add_child(glyph)
-	var brand := UI.label("Bibliothéca-viva", "H3")
-	brand.add_theme_font_size_override("font_size", 16)
-	col.add_child(UI.margin(UI.hbox(10, [logo, brand]), 6, 0, 0, 18))
-
-	_add_nav(col, "library", "Library", "library")
-	_add_nav(col, "browse", "Browse", "compass")
-	if web_available():
-		_add_nav(col, "web", "Web", "globe")
-	_add_nav(col, "updates", "Updates", "bell")
-	col.add_child(UI.spacer(false))
-
-	_continue_box = UI.vbox(6)
-	col.add_child(_continue_box)
-	_listening_box = UI.vbox(0)
-	col.add_child(_listening_box)
-	_bridge_row = UI.vbox(4)
-	col.add_child(UI.margin(_bridge_row, 10, 10, 6, 6))
-	_update_box = UI.vbox(0)
-	col.add_child(_update_box)
-	_add_nav(col, "settings", "Settings", "settings")
-	return side
-
-
-func _add_nav(col: VBoxContainer, key: String, text: String, icon: String) -> void:
-	var b := Button.new()
-	b.text = text
-	b.theme_type_variation = "NavButton"
-	b.toggle_mode = true
-	b.button_group = _nav_group
-	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	b.focus_mode = Control.FOCUS_NONE
-	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	b.icon = Icons.get_icon(icon, Color.WHITE, 20)
-	b.tooltip_text = text
-	b.set_meta("label", text)
-	b.pressed.connect(navigate.bind(key))
-	_nav_buttons[key] = b
-	col.add_child(b)
-
-
-func _on_progress_changed(_id: String) -> void:
-	if _continue_key_of(Library.last_read()) != _continue_key:
-		_refresh_continue()
-
-
-func _continue_key_of(book: Dictionary) -> String:
-	return "" if book.is_empty() else "%s:%d" % [book.id, book.progress.chapter]
-
-
-func _refresh_continue() -> void:
-	UI.clear(_continue_box)
-	var book := Library.last_read()
-	_continue_key = _continue_key_of(book)
-	if book.is_empty():
-		return
-	var card := Button.new()
-	card.focus_mode = Control.FOCUS_NONE
-	card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	card.add_theme_stylebox_override("normal", UiTheme.box(UiTheme.SURFACE, 12, UiTheme.BORDER, 1))
-	card.add_theme_stylebox_override("hover", UiTheme.box(UiTheme.SURFACE_2, 12, UiTheme.BORDER, 1))
-	card.add_theme_stylebox_override("pressed", UiTheme.box(UiTheme.SURFACE_2, 12, UiTheme.BORDER, 1))
-	card.custom_minimum_size = Vector2(0, 84)
-	var cover := CoverView.new()
-	cover.custom_minimum_size = Vector2(40, 60)
-	cover.radius = 5
-	cover.set_book(book)
-	var info := UI.vbox(2)
-	info.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	info.add_child(UI.label("CONTINUE", "Overline"))
-	var t := UI.label(book.title, "H3")
-	t.add_theme_font_size_override("font_size", 13)
-	t.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	t.custom_minimum_size.x = 110
-	info.add_child(t)
-	info.add_child(UI.label("%d of %d  ·  %d%%" % [book.progress.chapter + 1, book.chapters.size(), int(BookStatus.progress_ratio(book) * 100)], "Small"))
-	var bar := UI.progress(BookStatus.progress_ratio(book), 3)
-	info.add_child(bar)
-	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var row := UI.hbox(10, [cover, info])
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var m := UI.margin(row, 12, 12, 12, 12)
-	m.set_anchors_preset(Control.PRESET_FULL_RECT)
-	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card.add_child(m)
-	card.pressed.connect(func(): close_drawer(); open_reader(book.id))
-	_continue_box.add_child(card)
-
-
 ## Page key whose view shows the active read-aloud, or "" when nothing is playing.
 func _listening_page() -> String:
 	if not Speech.playing or not pages.has(Speech.source_owner):
@@ -474,13 +351,13 @@ func _listen_button_wanted() -> bool:
 
 
 func _refresh_listening() -> void:
-	if _listening_box == null:
+	if _nav == null:
 		return
-	UI.clear(_listening_box)
+	_nav.clear_listening()
 	var show := _listen_button_wanted()
 	if is_instance_valid(_top_listen) and _top_listen.visible != show:
 		_top_listen.visible = show
-		if not rail_active() and not _top_holes().is_empty():
+		if not rail_active() and not _fit.top_holes().is_empty():
 			_rebuild_topbar.call_deferred()  # the row's fit around the hole changed
 	if not show:
 		return
@@ -488,99 +365,11 @@ func _refresh_listening() -> void:
 	var tip := "%s: %s — click to jump there" % ["Paused" if Speech.paused else "Listening", title]
 	if is_instance_valid(_top_listen):
 		_top_listen.tooltip_text = tip
-	var card := Button.new()
-	card.focus_mode = Control.FOCUS_NONE
-	card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	card.tooltip_text = tip
-	card.add_theme_stylebox_override("normal", UiTheme.box(UiTheme.SURFACE, 12, UiTheme.ACCENT, 1))
-	card.add_theme_stylebox_override("hover", UiTheme.box(UiTheme.SURFACE_2, 12, UiTheme.ACCENT, 1))
-	card.add_theme_stylebox_override("pressed", UiTheme.box(UiTheme.SURFACE_2, 12, UiTheme.ACCENT, 1))
-	card.custom_minimum_size = Vector2(0, 58)
-	var icon := UI.icon("headphones", UiTheme.ACCENT, 20)
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var info := UI.vbox(2)
-	info.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	info.add_child(UI.label("PAUSED" if Speech.paused else "NOW LISTENING", "Overline"))
-	var t := UI.label(title, "Small")
-	t.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	t.custom_minimum_size.x = 90
-	info.add_child(t)
-	var toggle := UI.icon_button("play" if Speech.paused else "pause", "Resume" if Speech.paused else "Pause", Speech.toggle, 18)
-	toggle.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	var row := UI.hbox(10, [icon, info, toggle])
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var m := UI.margin(row, 12, 8, 6, 8)
-	m.set_anchors_preset(Control.PRESET_FULL_RECT)
-	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card.add_child(m)
-	card.pressed.connect(func(): close_drawer(); show_listening())
-	_listening_box.add_child(UI.margin(card, 0, 6, 0, 0))
-
-
-## Notice above Settings when GitHub has a newer release; opens it in the system browser.
-func _refresh_update() -> void:
-	if _update_box == null:
-		return
-	UI.clear(_update_box)
-	if UpdateCheck.latest == "":
-		return
-	var b := Button.new()
-	b.focus_mode = Control.FOCUS_NONE
-	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	b.tooltip_text = "Open the release page in your browser"
-	b.add_theme_stylebox_override("normal", UiTheme.box(UiTheme.SURFACE, 12, UiTheme.ACCENT, 1))
-	b.add_theme_stylebox_override("hover", UiTheme.box(UiTheme.SURFACE_2, 12, UiTheme.ACCENT, 1))
-	b.add_theme_stylebox_override("pressed", UiTheme.box(UiTheme.SURFACE_2, 12, UiTheme.ACCENT, 1))
-	b.custom_minimum_size = Vector2(0, 52)
-	var icon := UI.icon("download", UiTheme.ACCENT, 20)
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var info := UI.vbox(2)
-	info.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	info.add_child(UI.label("UPDATE AVAILABLE", "Overline"))
-	var ver := UI.hbox(6, [UI.label("Version %s" % UpdateCheck.latest.trim_prefix("v"), "Small")])
-	if UpdateCheck.latest_prerelease:
-		var pre := UI.label("Pre-release", "Small")
-		pre.add_theme_color_override("font_color", UiTheme.WARN)
-		ver.add_child(pre)
-	for c in ver.get_children():
-		c.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ver.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	info.add_child(ver)
-	var row := UI.hbox(10, [icon, info, UI.icon("external", UiTheme.MUTED, 16)])
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	for c in row.get_children():
-		c.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		(c as Control).size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	var m := UI.margin(row, 12, 8, 12, 8)
-	m.set_anchors_preset(Control.PRESET_FULL_RECT)
-	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	b.add_child(m)
-	b.pressed.connect(func(): close_drawer(); OS.shell_open(UpdateCheck.latest_url))
-	_update_box.add_child(UI.margin(b, 0, 6, 0, 6))
-
-
-## Status of plugins that run a helper (e.g. a local server), above Settings.
-func _refresh_bridge() -> void:
-	UI.clear(_bridge_row)
-	for p in Plugins.plugins:
-		var st: Dictionary = p.status()
-		if st.is_empty():
-			continue
-		var row := UI.hbox(8)
-		var dot := ColorRect.new()
-		dot.custom_minimum_size = Vector2(8, 8)
-		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		dot.color = UiTheme.GOOD if st.get("ok", false) else UiTheme.FAINT
-		row.add_child(dot)
-		row.tooltip_text = "%s: %s" % [p.name, st.get("text", "")]
-		row.add_child(UI.label(st.get("short", p.name), "Small"))
-		_bridge_row.add_child(row)
+	_nav.add_listening_card(title, tip)
 
 
 func _on_resize() -> void:
-	_update_safe_area()
+	_fit.update_safe_area()
 	var viewport := get_viewport_rect().size
 	var r := viewport.y < RAIL_MAX_HEIGHT and viewport.x > viewport.y
 	var c := r or viewport.x < COMPACT_WIDTH
@@ -608,198 +397,6 @@ func _on_resize() -> void:
 	for p in pages.values():
 		p.set_compact(compact)
 	_rebuild_topbar()
-
-
-# --- safe area (Android camera hole and system bars) -------------------------
-
-func _update_safe_area(force := false) -> void:
-	var insets := Vector4.ZERO
-	var cutouts: Array[Rect2] = []
-	var s := get_window().content_scale_factor
-	# On desktops the "safe area" is the screen minus the taskbar, not the window's.
-	if OS.has_feature("android"):
-		var win := Vector2(DisplayServer.window_get_size())
-		var safe := Rect2(DisplayServer.get_display_safe_area())
-		insets = Vector4(safe.position.x, safe.position.y, win.x - safe.end.x, win.y - safe.end.y) / s
-		for r in DisplayServer.get_display_cutouts():
-			cutouts.append(Rect2(r.position / s, r.size / s))
-	# Desktop testing: --fake-cutout=x,y,w,h (UI units) acts like a camera hole there.
-	for arg in OS.get_cmdline_user_args():
-		if arg.begins_with("--fake-cutout="):
-			var v := arg.get_slice("=", 1).split_floats(",")
-			if v.size() == 4:
-				cutouts = [Rect2(v[0], v[1], v[2], v[3])]
-				insets.y = maxf(insets.y, v[1] + v[3])
-	insets = insets.max(Vector4.ZERO)
-	if not force and insets.is_equal_approx(_insets) and cutouts == _cutouts:
-		return
-	_insets = insets
-	_cutouts = cutouts
-	_root.offset_left = insets.x
-	_root.offset_right = -insets.z
-	_root.offset_bottom = -insets.w
-	_sidebar_style.content_margin_top = 16 + insets.y
-	_toast_box.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-	_toast_box.position -= Vector2(24 + insets.z, 24 + insets.w)
-	_bar_span = Vector2(-1, -1)
-	if not force:
-		_rebuild_topbar()
-
-
-## Camera holes at the top edge of the screen.
-func _top_holes() -> Array[Rect2]:
-	var holes: Array[Rect2] = []
-	for c in _cutouts:
-		if c.position.y < 48 and c.size.y > 0:  # punch holes may sit a little below the edge
-			holes.append(c)
-	return holes
-
-
-func _on_topbar_moved() -> void:
-	if rail_active() or _top_holes().is_empty():
-		return
-	if Vector2(_topbar.global_position.x, _topbar.size.x) != _bar_span:
-		_rebuild_topbar.call_deferred()
-
-
-## Puts the top bar's first row at the very top of the screen, with its buttons
-## split around the camera hole, or below the hole when they don't fit beside it.
-## The title then gets its own full-width line under the buttons, unless
-## `title_up` and all of it fits beside the hole.
-func _place_top_row(row: HBoxContainer, title: Control, title_up := false) -> void:
-	var style := _topbar.get_theme_stylebox("panel") as StyleBoxFlat
-	var holes := _top_holes()
-	var depth := 0.0
-	for h in holes:
-		depth = maxf(depth, h.end.y)
-	# The safe area's top is often deeper than the hole itself (Android makes it
-	# the status bar's height), but the app runs fullscreen, so only the hole matters.
-	if holes.is_empty() or not _split_row(row, title, holes, style, title_up):
-		style.content_margin_top = _insets.y
-	else:
-		style.content_margin_top = maxf(0.0, depth - TOP_ROW_HEIGHT)
-
-
-func _split_row(row: HBoxContainer, title: Control, holes: Array[Rect2], style: StyleBoxFlat, title_up: bool) -> bool:
-	_bar_span = Vector2(_topbar.global_position.x, _topbar.size.x)
-	var row_x := _bar_span.x + style.content_margin_left
-	var row_w := _bar_span.y - style.content_margin_left - style.content_margin_right
-	if row_w <= 0:
-		return false  # not laid out yet; _on_topbar_moved comes back once it is
-	var x0 := INF
-	var x1 := -INF
-	for h in holes:
-		x0 = minf(x0, h.position.x - row_x - HOLE_PAD)
-		x1 = maxf(x1, h.end.x - row_x + HOLE_PAD)
-	if x1 <= 0 or x0 >= row_w:
-		return true  # the hole is beside the row, not over it
-	x0 = maxf(x0, 0.0)
-	x1 = minf(x1, row_w)
-
-	var items: Array = row.get_children()
-	var sep := float(row.get_theme_constant("separation"))
-	var slot := items.find(title)
-	# The title may stay in the row when all of it fits beside the hole.
-	var best := -1
-	if slot >= 0 and title_up:
-		var full := _full_width(title)
-		var old_min: float = title.custom_minimum_size.x
-		title.custom_minimum_size.x = full
-		best = _hole_slot(items, sep, x0, row_w - x1, slot + 1)
-		title.custom_minimum_size.x = old_min
-		if best > slot:  # title on the menu button's side of the hole
-			title.custom_minimum_size.x = full
-		else:
-			best = -1
-	if best < 0:
-		# Otherwise only the buttons go up there and the title gets its own line.
-		# Empty space takes its place, so the buttons keep to the ends of the row.
-		if slot >= 0:
-			items[slot] = UI.spacer()
-		best = _hole_slot(items, sep, x0, row_w - x1, maxi(slot, 0))
-		if best < 0:
-			if slot >= 0:
-				items[slot].free()
-			return false
-		if title:
-			_title_below(row, title)
-
-	var left_box := UI.hbox(int(sep))
-	left_box.custom_minimum_size.x = x0
-	var right_box := UI.hbox(int(sep))
-	right_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var left_fills := false
-	var right_fills := false
-	for i in items.size():
-		var c: Control = items[i]
-		if c.get_parent() == row:
-			row.remove_child(c)
-		var fills := (c.size_flags_horizontal & Control.SIZE_EXPAND) != 0
-		if i < best:
-			left_box.add_child(c)
-			left_fills = left_fills or fills
-		else:
-			right_box.add_child(c)
-			right_fills = right_fills or fills
-	if not left_fills:
-		left_box.add_child(UI.spacer())
-	if not right_fills:
-		var sp := UI.spacer()
-		right_box.add_child(sp)
-		right_box.move_child(sp, 0)  # keeps the actions at the right edge
-	var gap := Control.new()
-	gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	gap.custom_minimum_size.x = x1 - x0
-	row.add_theme_constant_override("separation", 0)
-	for c in [left_box, gap, right_box]:
-		row.add_child(c)
-	return true
-
-
-## Where in `items` the hole can go so everything before it fits in `left`
-## and everything after in `right`, or -1. Picks the place nearest `near`.
-func _hole_slot(items: Array, sep: float, left: float, right: float, near: int) -> int:
-	var widths: Array[float] = []
-	for c: Control in items:
-		widths.append(c.get_combined_minimum_size().x if c.visible else -1.0)  # hidden: takes no room
-	var best := -1
-	for k in items.size() + 1:
-		if _span(widths.slice(0, k), sep) > left or _span(widths.slice(k), sep) > right:
-			continue
-		if best < 0 or absi(k - near) < absi(best - near):
-			best = k
-	return best
-
-
-## How wide the title is with none of its text cut off.
-static func _full_width(title: Control) -> float:
-	if title is Label:
-		var font := title.get_theme_font("font")
-		var size := title.get_theme_font_size("font_size")
-		return ceilf(font.get_string_size(title.text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x)
-	return title.get_combined_minimum_size().x
-
-
-## Gives the title its own full-width line under the button row.
-func _title_below(row: HBoxContainer, title: Control) -> void:
-	row.remove_child(title)
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	title.size_flags_stretch_ratio = 1.0
-	if title is Label:
-		title.custom_minimum_size.x = 0
-	var line := UI.margin(title, 8, 0, 8, 4)
-	_top_rows.add_child(line)
-	_top_rows.move_child(line, row.get_index() + 1)
-
-
-static func _span(widths: Array, sep: float) -> float:
-	var shown := widths.filter(func(w): return w >= 0.0)
-	if shown.is_empty():
-		return 0.0
-	var total := sep * (shown.size() - 1)
-	for w in shown:
-		total += w
-	return total
 
 
 # --- drawer (compact layout) -------------------------------------------------
@@ -851,7 +448,7 @@ func _rebuild_topbar() -> void:
 		_tab_strip = null
 		_top_listen = null
 		UI.clear(_top_rows)
-		_rebuild_rail()
+		_nav.rebuild_rail()
 		_refresh_listening()
 		return
 	UI.clear(_rail_box)
@@ -871,7 +468,7 @@ func _rebuild_topbar() -> void:
 	UI.clear(_top_rows)
 	_top_listen = null
 	var row := UI.hbox(14)
-	row.custom_minimum_size.y = TOP_ROW_HEIGHT
+	row.custom_minimum_size.y = TopBarFit.TOP_ROW_HEIGHT
 	if compact:
 		var menu := UI.icon_button("menu", "Menu", open_drawer, 22)
 		menu.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -943,7 +540,7 @@ func _rebuild_topbar() -> void:
 			_top_rows.add_child(_tab_strip)
 		# A lone menu button up there looks lost, so the title joins it. With a
 		# back button (e.g. an open book) the buttons fill the strip well enough.
-		_place_top_row(row, title_ctl, not current.has_back())
+		_fit.place_top_row(row, title_ctl, not current.has_back())
 	else:
 		if _tab_strip:
 			var sep := ColorRect.new()
@@ -959,7 +556,7 @@ func _rebuild_topbar() -> void:
 			row.add_child(UI.spacer())
 		row.add_child(actions)
 		_top_rows.add_child(row)
-		_place_top_row(row, title_ctl)
+		_fit.place_top_row(row, title_ctl)
 		_fit_search_box()
 		_fit_search_box.call_deferred()
 	_refresh_listening()
@@ -969,82 +566,11 @@ func rail_active() -> bool:
 	return rail and current != null and current.supports_rail()
 
 
-func _rebuild_rail() -> void:
-	UI.clear(_rail_box)
-	_top_listen = null
-	var menu := rail_button("menu", "Menu", open_drawer)
-	_rail_box.add_child(menu)
-	if current.has_back():
-		_rail_box.add_child(rail_button("arrow_left", "Back", current.go_back))
-	var names := current.tabs()
-	if not names.is_empty():
-		_rail_box.add_child(_rail_tab_picker(names))
-	_rail_box.add_child(UI.spacer(false))
-	var actions := UI.hbox(0)
-	current.build_actions(actions)
-	for c: Control in actions.get_children():
-		actions.remove_child(c)
-		c.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		c.custom_minimum_size = c.custom_minimum_size.max(Vector2(40, 40))
-		_rail_box.add_child(c)
-	actions.free()
-	current.build_rail_extras(_rail_box)
-	_top_listen = rail_button("headphones", _listening_title(), show_listening)
-	_top_listen.icon = Icons.get_icon("headphones", UiTheme.ACCENT, 20)
-	_top_listen.visible = _listen_button_wanted()
-	_rail_box.add_child(_top_listen)
-
-
 func rail_button(icon: String, tip: String, callback: Callable) -> Button:
 	var b := UI.icon_button(icon, tip, callback)
 	b.custom_minimum_size = Vector2(40, 40)
 	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	return b
-
-
-func _rail_tab_picker(names: PackedStringArray) -> Button:
-	var selected := clampi(current.tab, 0, names.size() - 1)
-	var name := names[selected]
-	var icons := current.tab_icons()
-	var icon := icons[selected] if icons.size() == names.size() else "list"
-	var b := UI.button(name, icon, "GhostButton")
-	b.custom_minimum_size = Vector2(RAIL_WIDTH - 8, 48)
-	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	b.clip_text = true
-	b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	b.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP
-	b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	b.alignment = HORIZONTAL_ALIGNMENT_CENTER
-	b.add_theme_font_size_override("font_size", 10)
-	var normal := UiTheme.box(Color.TRANSPARENT, 8, Color.TRANSPARENT, 0, Vector4(2, 4, 2, 4))
-	var hover := UiTheme.box(UiTheme.SURFACE_2, 8, Color.TRANSPARENT, 0, Vector4(2, 4, 2, 4))
-	var selected_style := UiTheme.box(UiTheme.ACCENT_DIM, 8, Color.TRANSPARENT, 0, Vector4(2, 4, 2, 4))
-	for state in ["normal", "hover", "pressed", "hover_pressed"]:
-		b.add_theme_stylebox_override(state, normal if state == "normal" else hover if state == "hover" else selected_style)
-	b.tooltip_text = name
-	b.pressed.connect(func(): _show_tab_picker(b, names))
-	return b
-
-
-func _show_tab_picker(anchor: Control, names: PackedStringArray) -> void:
-	var list := UI.vbox(2)
-	list.custom_minimum_size.x = 220
-	var title := UI.label(current.page_title(), "H3")
-	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	list.add_child(title)
-	var pop := Popover.show_for(anchor, list)
-	var icons := current.tab_icons()
-	for i in names.size():
-		var index := i
-		var icon := icons[index] if icons.size() == names.size() else ""
-		var choice := UI.button(names[index], icon, "GhostButton", func():
-			pop.close()
-			current.select_tab(index)
-			_refresh_listening()
-			_rebuild_topbar())
-		choice.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		choice.custom_minimum_size.y = 40
-		list.add_child(choice)
 
 
 ## Frees room for overflowing tabs by shrinking the page's search field to an
@@ -1111,7 +637,7 @@ func _notification(what: int) -> void:
 		_icon_generation += 1
 		_hide_stray_keyboard()
 	elif what == NOTIFICATION_APPLICATION_RESUMED:
-		_update_safe_area()
+		_fit.update_safe_area()
 		_reupload_icons()
 	elif what == NOTIFICATION_WM_CLOSE_REQUEST:
 		var t := Time.get_ticks_msec()
