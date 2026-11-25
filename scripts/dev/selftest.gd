@@ -436,8 +436,8 @@ func _word_counts() -> void:
 	await Library._count_missing_words()
 	check("missing counts filled in from the saved text", b.chapters[0].get("words"), 3)
 	check("saved words added up", Library.saved_words(b), {"words": 3, "chapters": 1})
-	check("short count", [ReaderPage._short_count(950), ReaderPage._short_count(8400), ReaderPage._short_count(84321), ReaderPage._short_count(1200000)], ["950", "8.4k", "84k", "1.2M"])
-	check("grouped count", ReaderPage._grouped(1234567), "1,234,567")
+	check("short count", [ReaderDetails.short_count(950), ReaderDetails.short_count(8400), ReaderDetails.short_count(84321), ReaderDetails.short_count(1200000)], ["950", "8.4k", "84k", "1.2M"])
+	check("grouped count", ReaderDetails.grouped(1234567), "1,234,567")
 	Library.remove_book(b.id, false)
 
 

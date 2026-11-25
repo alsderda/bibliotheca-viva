@@ -43,7 +43,7 @@ var _contents_view: Control
 var _contents_list: VBoxContainer
 var _open_groups := {}  # start index -> true for each expanded Contents group
 var _contents_book := "" # book id `_open_groups` belongs to
-var _details_view: Control
+var details: ReaderDetails
 var bookmarks: ReaderBookmarks
 var _menu_paragraph := -1        # paragraph the context menu was opened on
 var _press_timer: Timer          # long-press on a paragraph (touch screens)
@@ -61,8 +61,6 @@ var _rail_info_label: Label
 var _rail_rate_btn: Button
 var _rail_sleep_btn: Button
 var _rail_more_popover: Popover
-var _epub_dialog: FileDialog
-var _cover_dialog: FileDialog
 var _search_view: SearchView
 var _find := {}                  # search match marked on the Read tab: {paragraph, from, to}
 
@@ -93,9 +91,8 @@ func _ready() -> void:
 	_search_view.set_compact(compact)
 	_search_view.hide()
 	add_child(_search_view)
-	_details_view = Control.new()
-	_details_view.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(_details_view)
+	details = ReaderDetails.new(self)
+	details.build_view()
 	bookmarks = ReaderBookmarks.new(self)
 	bookmarks.build_view()
 	_build_aa_popup()
@@ -176,14 +173,14 @@ func _on_tab(i: int) -> void:
 	_bg.visible = i == 0
 	_contents_view.visible = i == 1
 	_search_view.visible = i == SEARCH_TAB
-	_details_view.visible = i == DETAILS_TAB
+	details.view.visible = i == DETAILS_TAB
 	bookmarks.view.visible = i == BOOKMARKS_TAB
 	if i == 1:
 		_build_contents()
 	elif i == SEARCH_TAB:
 		_search_view.refresh()
 	elif i == DETAILS_TAB:
-		_build_details()
+		details.build()
 	elif i == BOOKMARKS_TAB:
 		bookmarks.build()
 
@@ -1105,303 +1102,6 @@ func go_to_bookmark(m: Dictionary) -> void:
 	chapter = m.chapter
 	header_changed.emit()
 	await _load_chapter(m.paragraph)
-
-
-func _build_details() -> void:
-	UI.clear(_details_view)
-	var row := UI.hbox(32) if not compact else UI.vbox(20)
-	var cover := CoverView.new()
-	cover.radius = 12
-	cover.custom_minimum_size = Vector2(200, 300) if not compact else Vector2(140, 210)
-	cover.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	cover.set_book(book)
-	row.add_child(cover)
-	var col := UI.vbox(10)
-	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var t := UI.label(book.title, "H1", true)
-	t.add_theme_font_override("font", UiTheme.serif_bold)
-	t.add_theme_font_size_override("font_size", 30)
-	col.add_child(t)
-	if book.author != "":
-		col.add_child(UI.label("by " + book.author, "Muted"))
-	var chips := HFlowContainer.new()
-	chips.add_theme_constant_override("h_separation", 6)
-	chips.add_theme_constant_override("v_separation", 6)
-	chips.add_child(UI.chip(BookStatus.kind_label(book), UiTheme.ACCENT))
-	chips.add_child(UI.chip(BookStatus.source_name(book)))
-	if book.get("dropped", false):
-		chips.add_child(UI.chip("Dropped", UiTheme.BAD))
-	elif BookStatus.is_finished(book):
-		chips.add_child(UI.chip("Finished", UiTheme.GOOD))
-	if BookStatus.is_favorite(book):
-		chips.add_child(UI.chip("Favorite", UiTheme.ACCENT))
-	if BookStatus.is_archived(book):
-		chips.add_child(UI.chip("Archived", UiTheme.MUTED))
-	for tag in book.get("tags", []):
-		var tb := UI.button(tag, "", "ChipButton", func(): main.pages.library.show_tag(tag), UiTheme.MUTED)
-		tb.tooltip_text = "Show the books tagged “%s”" % tag
-		chips.add_child(tb)
-	col.add_child(UI.margin(chips, 0, 4, 0, 8))
-	if book.get("possible_gap", false):
-		var gap := UI.label("Some new chapters may be missing. Open the book in the Web tab to fill them in.", "Small", true)
-		gap.add_theme_color_override("font_color", UiTheme.WARN)
-		col.add_child(gap)
-	var stats := HFlowContainer.new()  # wraps on narrow (phone) screens
-	stats.add_theme_constant_override("h_separation", 28)
-	stats.add_theme_constant_override("v_separation", 14)
-	stats.add_child(_stat("Chapters", str(book.chapters.size())))
-	stats.add_child(_stat("Progress", "%d%%" % int(BookStatus.progress_ratio(book) * 100)))
-	stats.add_child(_stat("Last read", UI.relative_time(book.last_read)))
-	if book.kind == "web":
-		stats.add_child(_stat("Downloaded", str(Library.cached_count(book.id))))
-	var words := Library.saved_words(book)
-	var total := int(book.get("total_words", 0))
-	if words.chapters > 0 or total > 0:
-		var w := _stat("Words", _short_count(words.words) + (" / " + _short_count(total) if total > 0 else ""))
-		w.tooltip_text = "%s words in %d saved chapter(s)%s" % [_grouped(words.words), words.chapters,
-			", %s in the whole book (from the site)" % _grouped(total) if total > 0 else ""]
-		stats.add_child(w)
-	col.add_child(stats)
-	if book.synopsis != "":
-		col.add_child(UI.margin(UI.label("About", "H3"), 0, 14, 0, 0))
-		var syn := UI.label(book.synopsis, "", true)
-		syn.add_theme_color_override("font_color", UiTheme.MUTED)
-		syn.add_theme_constant_override("line_spacing", 4)
-		col.add_child(syn)
-	var buttons := HFlowContainer.new()  # wraps on narrow (phone) screens
-	buttons.add_theme_constant_override("h_separation", 10)
-	buttons.add_theme_constant_override("v_separation", 10)
-	buttons.add_child(UI.button("Read", "book", "PrimaryButton", func(): main.pages.reader.select_tab(0); header_changed.emit()))
-	if not Library.editable_fields(book).is_empty():
-		var edit := UI.button("Edit details", "pencil", "", _edit_details)
-		if Library.is_file_book(book):
-			edit.tooltip_text = "Change the title, author, tags and description"
-		else:
-			edit.tooltip_text = "Change the title and tags shown for this book"
-		buttons.add_child(edit)
-	var change := UI.button("Change cover", "image", "", _pick_cover)
-	change.tooltip_text = "Use an image file (PNG, JPEG or WebP) as this book's cover"
-	buttons.add_child(change)
-	if book.url != "":
-		buttons.add_child(UI.button("Open website", "external", "", func(): OS.shell_open(book.url)))
-	if book.kind == "web":
-		var fill := UI.button("Add chapters from EPUB", "import", "", _pick_epub)
-		fill.tooltip_text = "Fill in chapters that aren't downloaded from an EPUB of this book, e.g. one saved with WebToEpub"
-		buttons.add_child(fill)
-	elif Library.is_file_book(book):
-		var more := UI.button("Add chapters from EPUB", "import", "", _pick_epub)
-		more.tooltip_text = "Add the new chapters of a later EPUB of this book to its end, e.g. the latest chapters of a serial. Chapters it already has are skipped."
-		buttons.add_child(more)
-	var favorite: bool = BookStatus.is_favorite(book)
-	var fav := UI.button("Unfavorite" if favorite else "Favorite", "star_fill" if favorite else "star", "", _toggle_favorite)
-	fav.tooltip_text = "Remove this book from the Favorites tab" if favorite \
-		else "Also show this book in the library's Favorites tab"
-	buttons.add_child(fav)
-	var archived: bool = BookStatus.is_archived(book)
-	var arch := UI.button("Unarchive" if archived else "Archive", "archive", "", _toggle_archived)
-	arch.tooltip_text = "Put this book back in the library's other tabs" if archived \
-		else "Move this book to the library's Archive tab, out of Reading, the other tabs and Updates (a favorite stays in Favorites). It's only checked for new chapters from its chapter list."
-	buttons.add_child(arch)
-	var dropped: bool = book.get("dropped", false)
-	var drop := UI.button("Undo drop" if dropped else "Mark as dropped", "refresh" if dropped else "x", "", _toggle_dropped)
-	drop.tooltip_text = "Show this book in the Reading tab again" if dropped \
-		else "Hide this book from the Reading tab until you open it again"
-	buttons.add_child(drop)
-	var del := UI.button("Delete book", "trash", "GhostButton", _confirm_delete, UiTheme.BAD)
-	del.add_theme_color_override("font_color", UiTheme.BAD)
-	del.tooltip_text = "Remove this book and its downloaded chapters from the library"
-	buttons.add_child(del)
-	col.add_child(UI.margin(buttons, 0, 16, 0, 0))
-	row.add_child(col)
-	var m := UI.margin(row, 40 if not compact else 20, 32, 40 if not compact else 20, 40)
-	var s := UI.scroll(m)
-	s.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_details_view.add_child(s)
-
-
-func _pick_epub() -> void:
-	if _epub_dialog == null:
-		_epub_dialog = FileDialog.new()
-		_epub_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
-		_epub_dialog.access = FileDialog.ACCESS_FILESYSTEM
-		_epub_dialog.use_native_dialog = true
-		_epub_dialog.filters = PackedStringArray(["*.epub ; EPUB ebooks"])
-		_epub_dialog.file_selected.connect(func(path):
-			if book.get("kind", "") == "web":
-				_fill_from_epub(path)
-			else:
-				_append_from_file(path))
-		add_child(_epub_dialog)
-	_epub_dialog.popup_centered_ratio(0.6)
-
-
-func _pick_cover() -> void:
-	if _cover_dialog == null:
-		_cover_dialog = FileDialog.new()
-		_cover_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
-		_cover_dialog.access = FileDialog.ACCESS_FILESYSTEM
-		_cover_dialog.use_native_dialog = true
-		_cover_dialog.filters = PackedStringArray(["*.png, *.jpg, *.jpeg, *.webp ; Images"])
-		_cover_dialog.file_selected.connect(_set_cover)
-		add_child(_cover_dialog)
-	_cover_dialog.popup_centered_ratio(0.6)
-
-
-func _edit_details() -> void:
-	var id: String = book.id
-	BookEditor.open(main, id, func():
-		main.toast("Details saved", "ok")
-		if book.get("id", "") == id:
-			book = Library.get_book(id)
-			_build_details()
-			header_changed.emit())
-
-
-func _toggle_dropped() -> void:
-	var dropped: bool = not book.get("dropped", false)
-	Library.set_dropped(book.id, dropped)
-	book = Library.get_book(book.id)
-	_build_details()
-	main.toast("Marked as dropped" if dropped else "Back in your Reading list", "ok")
-
-
-func _toggle_favorite() -> void:
-	var favorite: bool = not BookStatus.is_favorite(book)
-	Library.set_favorite(book.id, favorite)
-	book = Library.get_book(book.id)
-	_build_details()
-	main.toast("Added to favorites" if favorite else "Removed from favorites", "ok")
-
-
-func _toggle_archived() -> void:
-	var archived: bool = not BookStatus.is_archived(book)
-	Library.set_archived(book.id, archived)
-	book = Library.get_book(book.id)
-	_build_details()
-	main.toast("Archived. Find it in the library's Archive tab" if archived else "Back in your library", "ok")
-
-
-func _confirm_delete() -> void:
-	var id: String = book.id
-	ConfirmDialog.open(main, {
-		"title": "Delete “%s”?" % book.title,
-		"text": "This removes the book, its downloaded chapters, reading progress and bookmarks from the library, here and on your synced devices.",
-		"icon": "trash", "confirm": "Delete", "confirm_icon": "trash", "danger": true,
-	}, func():
-		var b := Library.get_book(id)
-		if b.is_empty():
-			return
-		if book.get("id", "") == id:
-			if Speech.source_owner == "reader":
-				Speech.stop()
-			book = {}
-			_items = []
-			main.navigate("library")
-		Library.remove_book(id)
-		main.toast("Deleted “%s”" % b.title))
-
-
-func _set_cover(path: String) -> void:
-	var id: String = book.id
-	# read the bytes: works for Android's content:// URIs too
-	var err := Library.set_cover_from_bytes(id, FileAccess.get_file_as_bytes(path))
-	if err != "":
-		main.toast(err, "error")
-		return
-	main.toast("Cover changed", "ok")
-	if book.get("id", "") == id:
-		book = Library.get_book(id)
-		_build_details()
-
-
-## Adds the chapters of a later EPUB of an imported book (the next chapters of a
-## serial) to its end. Asks first when the EPUB's title doesn't look like this book's.
-func _append_from_file(path: String) -> void:
-	var id: String = book.id
-	var parsed := Library.read_file(path)
-	if parsed.has("error"):
-		main.toast(parsed.error, "error")
-		return
-	var fresh := Library.new_chapters_for(id, parsed)
-	if fresh.is_empty():
-		main.toast("This book already has all of the EPUB's chapters", "warn")
-		return
-	if not EpubMatch.same_series(book, parsed):
-		ConfirmDialog.open(main, {
-			"title": "Add chapters from a different book?",
-			"text": "The EPUB is “%s”%s, not “%s”. Add its %d chapter(s) to the end of this book anyway?" % [
-				parsed.title, " by " + parsed.author if parsed.get("author", "") != "" else "", book.title, fresh.size()],
-			"icon": "import", "confirm": "Add chapters", "confirm_icon": "import",
-		}, func(): _append_chapters(id, parsed, fresh))
-		return
-	_append_chapters(id, parsed, fresh)
-
-
-func _append_chapters(id: String, parsed: Dictionary, fresh: Array) -> void:
-	if Library.get_book(id).is_empty():
-		return
-	var skipped: int = parsed.chapters.size() - fresh.size()
-	Library.append_chapters(id, parsed, fresh)
-	main.toast("Added %d chapter(s)%s" % [fresh.size(), " (%d were already in it)" % skipped if skipped > 0 else ""], "ok")
-	if book.get("id", "") == id:
-		book = Library.get_book(id)
-		_build_details()
-
-
-## Checks the site for new chapters first, so chapters the EPUB has that the
-## chapter list doesn't yet can be filled too (if the site can't be reached, the
-## chapters already listed are still filled).
-func _fill_from_epub(path: String) -> void:
-	var id: String = book.id
-	var epub := Library.read_epub_for(id, path)
-	if epub.has("error"):
-		main.toast(epub.error, "error")
-		return
-	main.toast("Adding chapters from the EPUB…")
-	await Sources.refresh(Library.get_book(id))
-	if Library.get_book(id).is_empty():
-		return
-	var r := Library.fill_from_epub(id, epub)
-	if book.get("id", "") == id:
-		book = Library.get_book(id)
-		_build_details()
-	if r.matched == 0:
-		main.toast("None of the EPUB's chapters are in this book", "warn")
-	elif r.filled == 0 and r.added == 0:
-		main.toast("All %d chapter(s) the EPUB has are already downloaded" % r.matched, "ok")
-	elif r.added == 0:
-		main.toast("Added %d chapter(s) from the EPUB" % r.filled, "ok")
-	else:
-		main.toast("Added %d chapter(s) from the EPUB, %d of them no longer on the site" % [r.filled + r.added, r.added], "ok")
-
-
-## 950, 8.4k, 84k, 1.2M
-static func _short_count(n: int) -> String:
-	if n < 1000:
-		return str(n)
-	if n < 10000:
-		return ("%.1fk" % (n / 1000.0)).replace(".0k", "k")
-	if n < 1000000:
-		return "%dk" % roundi(n / 1000.0)
-	return ("%.1fM" % (n / 1000000.0)).replace(".0M", "M")
-
-
-## 1234567 -> "1,234,567"
-static func _grouped(n: int) -> String:
-	var s := str(n)
-	var out := ""
-	while s.length() > 3:
-		out = "," + s.right(3) + out
-		s = s.left(s.length() - 3)
-	return s + out
-
-
-func _stat(label: String, value: String) -> Control:
-	var v := UI.vbox(2)
-	v.add_child(UI.label(label.to_upper(), "Overline"))
-	var l := UI.label(value, "H2")
-	v.add_child(l)
-	return v
 
 
 func _build_aa_popup() -> void:
