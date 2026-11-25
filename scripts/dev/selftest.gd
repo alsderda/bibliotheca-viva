@@ -965,6 +965,19 @@ func _fetch_manager() -> void:
 	Net.end_break(base + "/x")
 	r = await Net.get_text(base + "/retry")
 	check("retry ends the break", [r.ok, _hits.size()], [true, 2])
+
+	# A timeout from the app waking up is tried again, and the site isn't put on a break. Stalling
+	# the main thread longer than the timeout makes the next frame's delta span it, as waking does.
+	check("asleep timeouts", [Net.asleep_timeout(HTTPRequest.RESULT_TIMEOUT, 10, 30.0, false),
+		Net.asleep_timeout(HTTPRequest.RESULT_TIMEOUT, 30000, 30.0, false), Net.asleep_timeout(HTTPRequest.RESULT_TIMEOUT, 900000, 30.0, true),
+		Net.asleep_timeout(HTTPRequest.RESULT_CANT_CONNECT, 10, 30.0, true)], [true, false, true, false])
+	await get_tree().create_timer(0.6).timeout
+	_hits.clear()
+	var woke := []
+	OS.delay_msec(2500)
+	_collect(func(): return await Net.get_text(base + "/woke", [], 2.0), woke)
+	await _until(func(): return woke.size() == 1)
+	check("timeout on waking retried", [woke.size() == 1 and woke[0].ok, _hits.size(), Net._lanes["127.0.0.1"].down_until], [true, 1, 0])
 	Net._lanes.erase("127.0.0.1")
 	_server.stop()
 	_server = null
