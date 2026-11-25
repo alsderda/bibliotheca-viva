@@ -135,15 +135,15 @@ func _validation(t: Node) -> void:
 
 ## Names from other devices that end up in server or local paths.
 func _names(t: Node) -> void:
-	t.check("plain plugin id is safe", Sync._safe_name("mysite"), true)
-	t.check("dotted version is safe", Sync._safe_name("1.10.0"), true)
-	t.check("cover name is safe", Sync._safe_name("cover-abc123def456.png"), true)
-	t.check("parent escape is unsafe", Sync._safe_name("../x"), false)
-	t.check("subfolder is unsafe", Sync._safe_name("a/b"), false)
-	t.check("drive is unsafe", Sync._safe_name("c:"), false)
-	t.check("backslash is unsafe", Sync._safe_name("a\\b"), false)
-	t.check("hidden name is unsafe", Sync._safe_name(".hidden"), false)
-	t.check("empty name is unsafe", Sync._safe_name(""), false)
+	t.check("plain plugin id is safe", SyncPlugins.safe_name("mysite"), true)
+	t.check("dotted version is safe", SyncPlugins.safe_name("1.10.0"), true)
+	t.check("cover name is safe", SyncPlugins.safe_name("cover-abc123def456.png"), true)
+	t.check("parent escape is unsafe", SyncPlugins.safe_name("../x"), false)
+	t.check("subfolder is unsafe", SyncPlugins.safe_name("a/b"), false)
+	t.check("drive is unsafe", SyncPlugins.safe_name("c:"), false)
+	t.check("backslash is unsafe", SyncPlugins.safe_name("a\\b"), false)
+	t.check("hidden name is unsafe", SyncPlugins.safe_name(".hidden"), false)
+	t.check("empty name is unsafe", SyncPlugins.safe_name(""), false)
 
 
 ## State and cache saves go through a temp file, so a crash can't leave a

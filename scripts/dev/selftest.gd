@@ -405,19 +405,19 @@ func _sync_password() -> void:
 	var file := Settings.data_dir() + "/selftest_secret.dat"
 	var key := "selftest-key"
 	var pw := "p\u00e4ss \"word' $x;\n"
-	var where := Sync._write_password(pw, id, sealed, file, key)
+	var where := SyncSecret.write_password(pw, id, sealed, file, key)
 	check("password saved somewhere", where in ["keyring", "file"], true)
 	check("fallback file only without a keyring", FileAccess.file_exists(file), where == "file")
-	check("password read back", Sync._read_password(id, sealed, file, key), {"password": pw, "where": where})
+	check("password read back", SyncSecret.read_password(id, sealed, file, key), {"password": pw, "where": where})
 	Keyring.erase(id, sealed)
 	var f := FileAccess.open_encrypted_with_pass(file, FileAccess.WRITE, key)
 	f.store_string("old")
 	f.close()
-	check("old password file read", Sync._read_password(id, sealed, file, key).password, "old")
+	check("old password file read", SyncSecret.read_password(id, sealed, file, key).password, "old")
 	check("old password file moved when there's a keyring", FileAccess.file_exists(file), where == "file")
 	Keyring.erase(id, sealed)
 	DirAccess.remove_absolute(file)
-	check("nothing saved, nothing read", Sync._read_password(id, sealed, file, key), {"password": "", "where": ""})
+	check("nothing saved, nothing read", SyncSecret.read_password(id, sealed, file, key), {"password": "", "where": ""})
 
 
 ## Each saved chapter's word count is kept with the chapter and moves with it.

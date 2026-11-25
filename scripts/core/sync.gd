@@ -77,7 +77,9 @@ var devices: Array = []      # [{id, name, platform, updated}] other devices on 
 var _state := {}             # enabled, url, user, device_id, device_name, last_sync, uploaded_md5, uploaded_books
 var _password := ""
 var _password_ready := false  # false until it's been read from where it's kept
-var _secret_thread: Thread   # reads or saves the password (see Keyring)
+var _plugins := SyncPlugins.new(self)
+var _chapters := SyncChapters.new(self)
+var _secret := SyncSecret.new(self)
 ## Kept in sync_cache.json; the other devices' book files are kept in sync_devices/.
 ##   devices: device id -> {book key: md5 of its book file as cached}
 ##   server: book id -> {chapter id: true}: its chapters known to be in its
@@ -106,7 +108,7 @@ var _periodic: Timer
 
 func _ready() -> void:
 	_load_state()
-	_load_password()
+	_secret.load_password()
 	_debounce = Timer.new()
 	_debounce.one_shot = true
 	_debounce.timeout.connect(sync_now)
@@ -160,7 +162,7 @@ func user_name() -> String:
 func has_password() -> bool:
 	if _password_ready:
 		return _password != ""
-	return _state.get("password_in", "") != "" or FileAccess.file_exists(_secret_path())
+	return _state.get("password_in", "") != "" or FileAccess.file_exists(_secret.secret_path())
 
 
 ## Where the password is kept on this device, for the settings page.
@@ -211,7 +213,7 @@ func configure(url: String, user: String, password: String) -> void:
 	if password != "":
 		_password = password
 		_password_ready = true
-		_save_password()
+		_secret.save_password()
 	_save_state()
 	status_changed.emit()
 
@@ -229,7 +231,7 @@ func set_enabled(on: bool) -> void:
 func test_connection() -> String:
 	if not is_configured():
 		return "Enter the server address first."
-	await _wait_for_password()
+	await _secret.wait_for_password()
 	var r := await WebDav.new(server_url(), user_name(), _password).list("")
 	return "" if r.ok else r.error
 
@@ -315,7 +317,7 @@ func _set_progress(text: String) -> void:
 # --- the sync ----------------------------------------------------------------
 
 func _run() -> String:
-	await _wait_for_password()
+	await _secret.wait_for_password()
 	var pool: Array[WebDav] = []
 	for n in PARALLEL:
 		var d := WebDav.new(server_url(), user_name(), _password)
@@ -357,7 +359,7 @@ func _run_with(dav: WebDav, pool: Array[WebDav]) -> String:
 	devices = remote.map(func(d): return d.get("device", {}).merged({"updated": d.get("updated", 0)}))
 
 	_set_progress("Syncing plugins…")
-	err = await _sync_plugins(dav, remote)
+	err = await _plugins.sync_plugins(dav, remote)
 	if err != "":
 		return err
 
@@ -383,7 +385,7 @@ func _run_with(dav: WebDav, pool: Array[WebDav]) -> String:
 		known[b.id] = true
 		var key := Library.sync_key(b)
 		var wanted: Dictionary = covers.get(key, {})
-		var exists := folders.has(_folder_name(key))
+		var exists := folders.has(SyncChapters.folder_name(key))
 		if not exists:
 			_cache.server.erase(b.id)  # its folder is gone (or never was): nothing of it is there
 		var sig := SyncMerge.cover_sig(b, exists, wanted)
@@ -394,7 +396,7 @@ func _run_with(dav: WebDav, pool: Array[WebDav]) -> String:
 			_cache.missing.erase(b.id)  # no chapter it lacks is said to be there anymore
 			continue  # every chapter is on both sides, as far as is known
 		_set_progress("Syncing books (%d of %d)…" % [i + 1, all.size()])
-		err = await _sync_book(dav, pool, b, folders, wanted, flagged.get(key, {}), "Syncing books (%d of %d): %s" % [i + 1, all.size(), b.get("title", "")])
+		err = await _chapters.sync_book(dav, pool, b, folders, wanted, flagged.get(key, {}), "Syncing books (%d of %d): %s" % [i + 1, all.size(), b.get("title", "")])
 		if err != "":
 			return err
 		_cache.covers[b.id] = {"sig": sig, "cover": _cover_names.get(b.id, "")}
@@ -503,7 +505,7 @@ func _fetch_device(dav: WebDav, pool: Array[WebDav], id: String) -> Dictionary:
 
 ## One of another device's book files (a job for _in_parallel).
 func _fetch_book_file(dav: WebDav, key: String, id: String, work: Dictionary) -> String:
-	var g := await dav.fetch(FOLDER + "devices/%s/books/%s.json" % [id, _folder_name(key)])
+	var g := await dav.fetch(FOLDER + "devices/%s/books/%s.json" % [id, SyncChapters.folder_name(key)])
 	work.done += 1
 	if work.total > 20 and Time.get_ticks_msec() - _progress_shown > 250:
 		_progress_shown = Time.get_ticks_msec()
@@ -564,7 +566,7 @@ func _upload_own(dav: WebDav, pool: Array[WebDav]) -> String:
 	var jobs := []
 	for b in Library.books:
 		var key := Library.sync_key(b)
-		var name := _folder_name(key) + ".json"
+		var name := SyncChapters.folder_name(key) + ".json"
 		names[name] = true
 		var cover: String = _cover_names.get(b.id, "")
 		var rev: int = Library.revisions.get(b.id, 0)
@@ -959,444 +961,6 @@ func _remote_flags(remote: Array) -> Dictionary:
 	return out
 
 
-# --- plugins -----------------------------------------------------------------
-
-## A name from another device that is safe to put in a server or local path (a
-## plugin id or version, a cover file name). Anything that could escape its
-## folder is refused, and the entry is skipped.
-static func _safe_name(s: String) -> bool:
-	if s == "" or s.begins_with(".") or s.length() > 128:
-		return false
-	for bad in ["/", "\\", ":", ".."]:
-		if bad in s:
-			return false
-	for b in s.to_utf8_buffer():
-		if b < 32 or b == 127:
-			return false
-	return true
-
-
-## Install, update or remove plugins as other devices did, then upload the
-## plugins this device has that the server doesn't have yet.
-func _sync_plugins(dav: WebDav, remote: Array) -> String:
-	var newest := SyncMerge.newest_plugin_records(remote)  # id -> the most recent record of any other device
-	var mine := Plugins.sync_records()
-	for id in newest:
-		if not (id is String and _safe_name(id)):
-			print("Sync: plugin %s: skipped: unsafe id" % str(id))
-			continue
-		var r: Dictionary = newest[id]
-		var m: Dictionary = mine.get(id, {})
-		if SyncMerge.num(r.get("t", 0)) <= SyncMerge.num(m.get("t", 0)):
-			continue
-		if r.get("removed", false):
-			if Plugins.is_installed(id):
-				Plugins.remove(id, SyncMerge.num(r.get("t", 0)))
-			continue
-		if not Plugins.get_entry(id).is_empty() and not m.get("removed", false) and Plugins.compare_versions(str(r.get("v", "")), str(m.get("v", ""))) <= 0:
-			continue  # already have this version (or a newer one)
-		if not _safe_name(str(r.get("v", ""))):
-			print("Sync: plugin %s: skipped: unsafe version" % id)
-			continue
-		_set_progress("Installing plugin %s…" % id)
-		await _download_plugin(dav, id, str(r.get("v", "")), SyncMerge.num(r.get("t", 0)))
-
-	var listing := await dav.list(FOLDER + "plugins/")
-	if not listing.ok:
-		return listing.error
-	var have := Plugins.sync_records()
-	for id in have:
-		var r: Dictionary = have[id]
-		if r.get("removed", false):
-			continue
-		if not (id is String and _safe_name(id) and _safe_name(str(r.get("v", "")))):
-			print("Sync: plugin %s: skipped: unsafe id or version" % str(id))
-			continue
-		var files := Plugins.files_of(id)
-		if files.is_empty():
-			continue  # not all its files are readable here (e.g. an exported build)
-		var folder := FOLDER + "plugins/%s/%s/" % [id, r.v]
-		if _listed(listing, id):
-			var versions := await dav.list(FOLDER + "plugins/%s/" % id)
-			if versions.ok and _listed(versions, str(r.v)):
-				# The manifest goes up last and marks the version complete, so
-				# only it says the upload finished (a folder alone may hold an
-				# interrupted upload, which downloaders skip as incomplete).
-				var uploaded := await dav.list(folder)
-				if uploaded.ok and SyncMerge.version_complete(uploaded.entries, Plugins.MANIFEST):
-					continue
-		_set_progress("Uploading plugin %s…" % id)
-		var made := {}
-		for rel in files:
-			if rel == Plugins.MANIFEST:
-				continue
-			var err := await _put_plugin_file(dav, folder, rel, files[rel], made)
-			if err != "":
-				return err
-		var err := await _put_plugin_file(dav, folder, Plugins.MANIFEST, files[Plugins.MANIFEST], made)  # last: marks it complete
-		if err != "":
-			return err
-	return ""
-
-
-## Upload one file of a plugin, creating its folders on the way (`made` remembers them).
-func _put_plugin_file(dav: WebDav, folder: String, rel: String, path: String, made: Dictionary) -> String:
-	var base := FOLDER + "plugins/"
-	var dirs := (folder.trim_prefix(base) + rel).split("/")
-	var at := base
-	for i in dirs.size() - 1:
-		at += dirs[i] + "/"
-		if made.has(at):
-			continue
-		var r := await dav.make_dir(at)
-		if not r.ok and r.code != 405:  # 405: it's already there
-			return r.error
-		made[at] = true
-	var put := await dav.put(folder + rel, FileAccess.get_file_as_bytes(path))
-	return "" if put.ok else put.error
-
-
-## Install a plugin version from the server. Reads its plugin.json first and
-## skips a plugin that can't run here without downloading its files. Any failure
-## only skips this plugin (it's tried again next time); the rest of the sync goes on.
-func _download_plugin(dav: WebDav, id: String, version: String, stamp: float) -> void:
-	if not _safe_name(id) or not _safe_name(version):
-		print("Sync: plugin %s: skipped: unsafe id or version" % id)
-		return
-	var folder := FOLDER + "plugins/%s/%s/" % [id, version]
-	var g := await dav.fetch(folder + Plugins.MANIFEST)
-	if not g.ok:
-		if g.code != 404:  # 404: not uploaded completely yet
-			print("Sync: plugin %s: couldn't download %s (%s)" % [id, Plugins.MANIFEST, g.error])
-		return
-	var m: Variant = JSON.parse_string(g.body.get_string_from_utf8())
-	if not (m is Dictionary):
-		print("Sync: plugin %s: %s is damaged" % [id, Plugins.MANIFEST])
-		return
-	var why := Plugins.check_manifest(m)
-	if why != "":  # e.g. a desktop-only plugin on a phone
-		print("Sync: plugin %s: skipped: %s" % [id, why])
-		return
-	var files := {Plugins.MANIFEST: g.body}
-	for rel in m.get("files", []):
-		var f := await dav.fetch(folder + str(rel))
-		if not f.ok:
-			print("Sync: plugin %s: couldn't download %s (%s)" % [id, rel, f.error])
-			return
-		files[str(rel)] = f.body
-	var r := Plugins.install_files(m, files, stamp)
-	if r.has("error"):
-		print("Sync: plugin %s: %s" % [id, r.error])
-
-
-# --- chapters and covers -----------------------------------------------------
-
-static func _folder_name(key: String) -> String:
-	return key.md5_text().left(20)
-
-
-## `flagged`: the chapter ids other devices say are in the book's folder.
-func _sync_book(dav: WebDav, pool: Array[WebDav], b: Dictionary, folders: Dictionary, wanted: Dictionary, flagged: Dictionary, label := "") -> String:
-	var key := Library.sync_key(b)
-	var folder := FOLDER + "books/" + _folder_name(key) + "/"
-	var exists := folders.has(_folder_name(key))
-	var remote := {}
-	if exists:
-		var l := await dav.list(folder)
-		if l.ok:
-			for e in l.entries:
-				remote[e["name"]] = e.size
-		elif l.code == 404:
-			exists = false
-		else:
-			return l.error
-	var done: Dictionary = _done.get(b.id, {})
-	_done[b.id] = done
-	var packs := {}    # pack file name -> [chapter file names in it]
-	var in_pack := {}  # chapter file name -> the pack it's in
-	var err := await _read_packs(pool, folder, remote, packs)
-	if err != "":
-		return err
-	for p in packs:
-		for name in packs[p]:
-			in_pack[name] = p
-	var server := {}  # chapter ids in the folder, as listed
-	for n in remote:
-		if n.ends_with(".json") and not n.begins_with("pack-") and int(remote[n]) > 0:
-			server[n.get_basename()] = true
-	for name in in_pack:
-		server[name.get_basename()] = true
-	_cache.server[b.id] = server
-
-	# work out what to send and fetch, then do it over several connections
-	var downs := []  # chapter file names
-	var ups := []    # [chapter file name, index]
-	var loose := []  # [chapter file name, index]: on the server only as its own file, and here
-	for i in b.chapters.size():
-		var name := _chapter_id_of(b.chapters[i], i) + ".json"
-		var on_server := remote.has(name) or in_pack.has(name)
-		var local_full := Library.has_full_chapter(b.id, i)
-		if remote.has(name) and int(remote[name]) > 0 and not in_pack.has(name) and local_full:
-			loose.append([name, i])
-		if on_server and done.has(name):
-			continue
-		if on_server and not local_full:
-			downs.append(name)
-		elif local_full and not in_pack.has(name) and (not remote.has(name) or int(remote[name]) == 0):
-			ups.append([name, i])
-		elif on_server and local_full:
-			done[name] = true
-	# many chapters with only their own files (sent one by one, e.g. by an older
-	# version): pack them too, so a new device fetches them in few requests
-	if loose.size() >= PACK_MIN:
-		ups.append_array(loose)
-	var jobs := _chapter_jobs(b, downs, ups, remote, packs, in_pack)
-	if not exists and jobs.any(func(j): return j.kind in ["put", "put_pack"]):
-		var m := await dav.make_dir(folder)
-		if not m.ok:
-			return m.error
-		exists = true
-	if not jobs.is_empty():
-		var total := 0
-		for j in jobs:
-			total += int(j.count)
-		var work := {"jobs": jobs, "next": 0, "finished": 0, "total": total, "running": pool.size(), "error": "",
-			"book": b, "folder": folder, "done": done, "label": label, "index": {}, "chapters": null}
-		for d in pool:
-			_chapter_worker(d, work)
-		while work.running > 0:
-			await get_tree().process_frame
-		for name in done:  # sent or fetched (also when a job failed after others)
-			server[name.get_basename()] = true
-		if work.error != "":
-			return work.error
-		if Library.get_book(b.id).is_empty():
-			return ""
-	var missing := []  # said to be there, but aren't
-	for id in _chapter_ids_of(b):
-		if flagged.has(id) and not server.has(id):
-			missing.append(id)
-	if missing.is_empty():
-		_cache.missing.erase(b.id)
-	else:
-		_cache.missing[b.id] = missing
-
-	var cover: String = wanted.get("name", "")
-	if cover != "" and not _safe_name(cover):
-		print("Sync: book %s: skipped an unsafe cover name" % Library.sync_key(b))
-		cover = ""
-	var have_cover: bool = b.cover != "" and FileAccess.file_exists(b.cover)
-	var local_name := "cover-%s.png" % FileAccess.get_md5(b.cover).left(12) if have_cover else ""
-	# another device picked a different cover by hand after this one's was set
-	var replace: bool = have_cover and cover != "" and cover != local_name and remote.has(cover) \
-		and float(wanted.get("set", 0)) > float(b.get("cover_set", 0))
-	if have_cover and not replace:
-		var name := local_name
-		if not remote.has(name):
-			if not exists:
-				var m := await dav.make_dir(folder)
-				if not m.ok:
-					return m.error
-			var r := await dav.put(folder + name, FileAccess.get_file_as_bytes(b.cover), "image/png")
-			if not r.ok:
-				return r.error
-		_cover_names[b.id] = name
-	elif cover != "" and remote.has(cover):
-		var g := await dav.fetch(folder + cover)
-		if g.ok and Image.new().load_png_from_buffer(g.body) == OK and not Library.get_book(b.id).is_empty():
-			DirAccess.make_dir_recursive_absolute(Settings.data_dir() + "/covers")
-			var path := "%s/covers/%s.png" % [Settings.data_dir(), b.id]
-			if SafeFile.write_bytes(path, g.body):
-				_applying = true
-				Library.update_book(b.id, {"cover": path, "cover_set": float(wanted.get("set", 0)), "modified": b.modified})
-				_applying = false
-				_cover_names[b.id] = cover
-	return ""
-
-
-## Takes chapter jobs from `work` until none are left or one fails (work.error).
-## Several of these run at once, each on its own connection.
-func _chapter_worker(dav: WebDav, work: Dictionary) -> void:
-	var b: Dictionary = work.book
-	var jobs: Array = work.jobs
-	while work.error == "" and work.next < jobs.size() and not Library.get_book(b.id).is_empty():
-		var job: Dictionary = jobs[work.next]
-		work.next += 1
-		var r: Dictionary
-		match job.kind:
-			"put":
-				var at := _job_index(work, job.name.get_basename())
-				if at < 0:
-					continue
-				r = await dav.put(work.folder + job.name, FileAccess.get_file_as_bytes("%s/%d.json" % [Library.book_dir(b.id), at]), "application/json")
-				if r.ok:
-					work.done[job.name] = true
-			"get":
-				r = await dav.fetch(work.folder + job.name)
-				if r.ok and not Library.get_book(b.id).is_empty():
-					var ch: Variant = JSON.parse_string(r.body.get_string_from_utf8())
-					# the chapter list may have changed while downloading; find the chapter again
-					var at := _job_index(work, job.name.get_basename())
-					if ch is Dictionary and ch.get("paragraphs") is Array and at >= 0:
-						Library.store_chapter(b.id, at, str(ch.get("title", b.chapters[at].title)), PackedStringArray(ch.paragraphs))
-						work.done[job.name] = true
-			"put_pack":
-				r = await _put_pack(dav, work, job.names)
-			"get_pack":
-				r = await _get_pack(dav, work, job.name)
-		if not r.ok:
-			work.error = r.error
-			break
-		work.finished += int(job.count)
-		# shown at most a few times a second; a big book can take many minutes
-		if work.label != "" and Time.get_ticks_msec() - _progress_shown > 250:
-			_progress_shown = Time.get_ticks_msec()
-			_set_progress("%s, %d of %d chapters…" % [work.label, mini(work.finished, work.total), work.total])
-	work.running -= 1
-
-
-## The jobs for _chapter_worker: {kind, count (chapters it covers), name or names}.
-## Many chapters to send go in packs; a pack is fetched instead of its chapters'
-## own files when it's the only copy of one, or when a good part of it is wanted.
-func _chapter_jobs(b: Dictionary, downs: Array, ups: Array, remote: Dictionary, packs: Dictionary, in_pack: Dictionary) -> Array:
-	var jobs := []
-	var wanted := {}  # pack -> chapters wanted from it
-	var only := {}    # pack -> true: holds a wanted chapter that has no file of its own
-	for name in downs:
-		if in_pack.has(name):
-			var p: String = in_pack[name]
-			wanted[p] = wanted.get(p, 0) + 1
-			if not remote.has(name):
-				only[p] = true
-	var from_pack := {}
-	for p in wanted:
-		if only.has(p) or wanted[p] * 4 >= packs[p].size():
-			jobs.append({"kind": "get_pack", "name": p, "count": wanted[p]})
-			for name in packs[p]:
-				from_pack[name] = true
-	for name in downs:
-		if not from_pack.has(name):
-			jobs.append({"kind": "get", "name": name, "count": 1})
-	if ups.size() < PACK_MIN:
-		for u in ups:
-			jobs.append({"kind": "put", "name": u[0], "count": 1})
-		return jobs
-	var names := []
-	var bytes := 0
-	for u in ups:
-		var f := FileAccess.open("%s/%d.json" % [Library.book_dir(b.id), u[1]], FileAccess.READ)
-		var size := f.get_length() if f else 0
-		if size > PACK_BYTES:  # on its own, so no pack can unpack past PACK_GZIP_MAX
-			jobs.append({"kind": "put", "name": u[0], "count": 1})
-			continue
-		if not names.is_empty() and bytes + size > PACK_BYTES:
-			jobs.append({"kind": "put_pack", "names": names, "count": names.size()})
-			names = []
-			bytes = 0
-		names.append(u[0])
-		bytes += size
-	if not names.is_empty():
-		jobs.append({"kind": "put_pack", "names": names, "count": names.size()})
-	return jobs
-
-
-## Fills `packs` (pack file name -> [chapter file names]) from the complete packs
-## in a book's server folder, whose listing is `remote`. -> error or "".
-func _read_packs(pool: Array[WebDav], folder: String, remote: Dictionary, packs: Dictionary) -> String:
-	var fetch := []
-	for n in remote:
-		if n.begins_with("pack-") and n.ends_with(".ids.json") and remote.has(n.trim_suffix(".ids.json") + ".json.gz"):
-			if not _pack_ids.has(folder + n):
-				fetch.append(n)
-	if not fetch.is_empty():
-		var err := await _in_parallel(pool, fetch, func(dav: WebDav, n: String) -> String:
-			var g := await dav.fetch(folder + n)
-			if g.code == 404:
-				return ""
-			if not g.ok:
-				return g.error
-			var ids: Variant = JSON.parse_string(g.body.get_string_from_utf8())
-			_pack_ids[folder + n] = ids if ids is Array else []
-			return "")
-		if err != "":
-			return err
-	for n in remote:
-		if _pack_ids.has(folder + n) and remote.has(n.trim_suffix(".ids.json") + ".json.gz"):
-			packs[n.trim_suffix(".ids.json") + ".json.gz"] = _pack_ids[folder + n].map(func(id): return str(id) + ".json")
-	return ""
-
-
-## Sends chapters (file names) of work.book as one pack, then its list of ids.
-func _put_pack(dav: WebDav, work: Dictionary, names: Array) -> Dictionary:
-	var b: Dictionary = work.book
-	var chapters := {}
-	for name in names:
-		var at := _job_index(work, name.get_basename())
-		if at < 0:
-			continue
-		var ch: Variant = JSON.parse_string(FileAccess.get_file_as_string("%s/%d.json" % [Library.book_dir(b.id), at]))
-		if ch is Dictionary and ch.get("paragraphs") is Array:
-			chapters[name.get_basename()] = {"title": str(ch.get("title", "")), "paragraphs": ch.paragraphs}
-	if chapters.is_empty():
-		return {"ok": true}
-	var text := JSON.stringify({"chapters": chapters})
-	var base: String = work.folder + "pack-" + text.md5_text().left(16)
-	var r := await dav.put(base + ".json.gz", text.to_utf8_buffer().compress(FileAccess.COMPRESSION_GZIP), "application/gzip")
-	if not r.ok:
-		return r
-	var ids := chapters.keys()
-	r = await dav.put(base + ".ids.json", JSON.stringify(ids).to_utf8_buffer(), "application/json")  # last: marks it complete
-	if r.ok:
-		_pack_ids[base + ".ids.json"] = ids
-		for id in ids:
-			work.done[id + ".json"] = true
-	return r
-
-
-## Fetches a pack and saves the chapters in it this device doesn't have yet.
-func _get_pack(dav: WebDav, work: Dictionary, name: String) -> Dictionary:
-	var b: Dictionary = work.book
-	var r := await dav.fetch(work.folder + name)
-	if not r.ok or Library.get_book(b.id).is_empty():
-		return r
-	var raw: PackedByteArray = r.body.decompress_dynamic(PACK_GZIP_MAX, FileAccess.COMPRESSION_GZIP)
-	if raw.is_empty():
-		return r  # damaged, or unpacks past PACK_GZIP_MAX: fetched one by one next time, if they have their own files
-	var data: Variant = JSON.parse_string(raw.get_string_from_utf8())
-	if not (data is Dictionary and data.get("chapters") is Dictionary):
-		return r  # damaged: its chapters are fetched one by one next time, if they have their own files
-	var saved := 0
-	for id in data.chapters:
-		var ch: Variant = data.chapters[id]
-		var at := _job_index(work, str(id))
-		if at < 0 or not (ch is Dictionary and ch.get("paragraphs") is Array):
-			continue
-		if not Library.has_full_chapter(b.id, at):
-			Library.store_chapter(b.id, at, str(ch.get("title", b.chapters[at].title)), PackedStringArray(ch.paragraphs))
-			saved += 1
-			if saved % 20 == 0:  # counting words takes a while; keep the app responsive
-				await get_tree().process_frame
-				if Library.get_book(b.id).is_empty():
-					return r
-		work.done[str(id) + ".json"] = true
-	return r
-
-
-## A chapter's current index by its id, from a map that's rebuilt only when the
-## book's chapter list has changed (looking each one up anew is slow for big books).
-func _job_index(work: Dictionary, id: String) -> int:
-	var b: Dictionary = work.book
-	var at: int = work.index.get(id, -1)
-	if work.chapters != null and is_same(work.chapters, b.chapters) and at >= 0 and at < b.chapters.size() \
-			and _chapter_id_of(b.chapters[at], at) == id:
-		return at
-	work.chapters = b.chapters
-	work.index = {}
-	for i in b.chapters.size():
-		work.index[_chapter_id_of(b.chapters[i], i)] = i
-	return work.index.get(id, -1)
-
-
 ## Deletes the server folders of books removed more than GC_AFTER ago that no
 ## device has anymore.
 func _collect_garbage(dav: WebDav, folders: Dictionary, remote: Array) -> void:
@@ -1409,8 +973,8 @@ func _collect_garbage(dav: WebDav, folders: Dictionary, remote: Array) -> void:
 				live[e.get("key", "")] = true
 	var now := Time.get_unix_time_from_system()
 	for k in Library.tombstones:
-		if now - float(Library.tombstones[k]) > GC_AFTER and not live.has(k) and folders.has(_folder_name(k)):
-			await dav.remove(FOLDER + "books/" + _folder_name(k) + "/")
+		if now - float(Library.tombstones[k]) > GC_AFTER and not live.has(k) and folders.has(SyncChapters.folder_name(k)):
+			await dav.remove(FOLDER + "books/" + SyncChapters.folder_name(k) + "/")
 
 
 # --- local state -------------------------------------------------------------
@@ -1433,7 +997,7 @@ func _remote_dir() -> String:
 
 
 func _remote_path(id: String, key: String) -> String:
-	return "%s/%s/%s.json" % [_remote_dir(), id, _folder_name(key)]
+	return "%s/%s/%s.json" % [_remote_dir(), id, SyncChapters.folder_name(key)]
 
 
 static func _remove_tree(path: String) -> void:
@@ -1445,21 +1009,6 @@ static func _remove_tree(path: String) -> void:
 	for f in dir.get_files():
 		dir.remove(f)
 	DirAccess.remove_absolute(path)
-
-
-## Fallback for systems without a keyring: encrypted with a key made from this
-## device's id. That keeps it out of plain view, but isn't strong protection.
-func _secret_path() -> String:
-	return Settings.data_dir() + "/sync_secret.dat"
-
-
-## Where Keyring keeps the encrypted password on Windows and Android.
-func _sealed_path() -> String:
-	return ProjectSettings.globalize_path(Settings.data_dir() + "/sync_secret.sealed")
-
-
-func _keyring_id() -> String:
-	return "sync-" + Settings.profile
 
 
 func _load_state() -> void:
@@ -1491,95 +1040,8 @@ func _save_cache() -> void:
 	SafeFile.write_text(_cache_path(), JSON.stringify(_cache))
 
 
-# --- the password ------------------------------------------------------------
-# It's kept in the system's keyring (see Keyring) and, where there is none, in the
-# fallback file. _state.password_in says which: "keyring", "file" or "" (none).
-# Reading and saving run in a thread, since the keyring helpers can be slow to start.
-
-func _load_password() -> void:
-	if not is_configured() and not FileAccess.file_exists(_secret_path()):
-		_password_ready = true
-		return
-	var found: Dictionary = await _in_secret_thread(_read_password.bind(_keyring_id(), _sealed_path(), _secret_path(), _secret_key()))
-	if _password_ready:  # a new password was entered meanwhile
-		return
-	_password = found.password
-	_password_ready = true
-	_state.password_in = found.where
-	_save_state()
-	status_changed.emit()
-
-
-func _save_password() -> void:
-	var where: String = await _in_secret_thread(_write_password.bind(_password, _keyring_id(), _sealed_path(), _secret_path(), _secret_key()))
-	_state.password_in = where
-	_save_state()
-	status_changed.emit()
-
-
-func _wait_for_password() -> void:
-	while not _password_ready:
-		await get_tree().process_frame
-
-
-## Runs `job` in a thread, one at a time, and returns its result.
-func _in_secret_thread(job: Callable) -> Variant:
-	while _secret_thread != null:
-		await get_tree().process_frame
-	_secret_thread = Thread.new()
-	_secret_thread.start(job)
-	while _secret_thread.is_alive():
-		await get_tree().process_frame
-	var result: Variant = _secret_thread.wait_to_finish()
-	_secret_thread = null
-	return result
-
-
 func _exit_tree() -> void:
-	if _secret_thread != null:
-		var t := Time.get_ticks_msec()
-		_secret_thread.wait_to_finish()
-		AppLog.info("close", "password thread finished in %d ms" % AppLog.since(t))
-
-
-## In a thread. Reads the keyring first, then the fallback file, and moves a
-## password found in the file into the keyring. -> {password, where}
-static func _read_password(id: String, sealed: String, file: String, key: String) -> Dictionary:
-	var secret: Variant = Keyring.fetch(id, sealed)
-	if secret is String and secret != "":
-		return {"password": secret, "where": "keyring"}
-	var f := FileAccess.open_encrypted_with_pass(file, FileAccess.READ, key)
-	if f == null:
-		return {"password": "", "where": ""}
-	var password := f.get_as_text()
-	f.close()
-	if password != "" and Keyring.store(id, password, sealed):
-		DirAccess.remove_absolute(file)
-		return {"password": password, "where": "keyring"}
-	return {"password": password, "where": "file" if password != "" else ""}
-
-
-## In a thread. -> where it was saved: "keyring" or "file".
-static func _write_password(password: String, id: String, sealed: String, file: String, key: String) -> String:
-	if Keyring.store(id, password, sealed):
-		if FileAccess.file_exists(file):
-			DirAccess.remove_absolute(file)
-		return "keyring"
-	Keyring.erase(id, sealed)  # don't leave an older password behind
-	# Through a temp file, so a crash keeps the old password.
-	var tmp := file + ".tmp"
-	var f := FileAccess.open_encrypted_with_pass(tmp, FileAccess.WRITE, key)
-	if f:
-		f.store_string(password)
-		f.close()
-		if DirAccess.rename_absolute(tmp, file) != OK:
-			DirAccess.remove_absolute(file)
-			DirAccess.rename_absolute(tmp, file)
-	return "file"
-
-
-static func _secret_key() -> String:
-	return "serial-reader-sync:" + OS.get_unique_id()
+	_secret.wait_for_thread()
 
 
 static func _default_device_name() -> String:

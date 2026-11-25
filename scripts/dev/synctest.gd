@@ -250,7 +250,7 @@ func a_big() -> void:
 func a_resume() -> void:
 	Plugins.remove("synctestplugin")
 	await sync()
-	var files := await server_files("books/%s/" % Sync._folder_name(Library.sync_key(big_book())))
+	var files := await server_files("books/%s/" % SyncChapters.folder_name(Library.sync_key(big_book())))
 	check("big book sent as packs", files.filter(func(n): return n.ends_with(".json.gz")).size() > 0, true)
 	check("no chapter files of their own", files.filter(func(n): return not n.begins_with("pack-")).size(), 0)
 
@@ -284,7 +284,7 @@ func b_big() -> void:
 	Library.store_chapter(big.id, 600, "Big 600", paras("big 600"))
 	Library.store_chapter(big.id, 601, "Big 601", paras("big 601"))
 	await sync("sync of two new chapters")
-	var files := await server_files("books/%s/" % Sync._folder_name(Library.sync_key(big)))
+	var files := await server_files("books/%s/" % SyncChapters.folder_name(Library.sync_key(big)))
 	check("new chapters have files of their own", files.filter(func(n): return not n.begins_with("pack-")).size(), 2)
 
 
@@ -298,13 +298,13 @@ func a_big_after() -> void:
 		chapters.append({"title": "Old %d" % i, "url": "https://example.com/old/%d" % i, "date": 0})
 	var old := Library.add_book({"title": "Old Book", "source": "web", "url": "https://example.com/old", "chapters": chapters})
 	var dav := WebDav.new(Sync.server_url(), Sync.user_name(), Sync._password)
-	var folder := "bibliotheca-viva/books/%s/" % Sync._folder_name(Library.sync_key(old))
+	var folder := "bibliotheca-viva/books/%s/" % SyncChapters.folder_name(Library.sync_key(old))
 	await dav.make_dir(folder)
 	for i in 30:
 		Library.store_chapter(old.id, i, "Old %d" % i, paras("old %d" % i))
 		await dav.put(folder + Sync._chapter_id_of(chapters[i], i) + ".json", FileAccess.get_file_as_bytes("%s/%d.json" % [Library.book_dir(old.id), i]))
 	await sync("sync of an old book")
-	var files := await server_files("books/%s/" % Sync._folder_name(Library.sync_key(old)))
+	var files := await server_files("books/%s/" % SyncChapters.folder_name(Library.sync_key(old)))
 	check("old book's chapters packed", files.filter(func(n): return n.ends_with(".json.gz")).size(), 1)
 
 
@@ -386,7 +386,7 @@ func a_gone() -> void:
 	Library.store_chapter(book.id, 3, "Race 3", paras("race 3"))
 	await sync()
 	var name := Sync._chapter_id_of(book.chapters[3], 3) + ".json"
-	var folder := "books/%s/" % Sync._folder_name(Library.sync_key(book))
+	var folder := "books/%s/" % SyncChapters.folder_name(Library.sync_key(book))
 	check("chapter sent", name in await server_files(folder), true)
 	var dav := WebDav.new(Sync.server_url(), Sync.user_name(), Sync._password)
 	await dav.remove("bibliotheca-viva/" + folder + name)
@@ -404,7 +404,7 @@ func a_gone_fix() -> void:
 	await sync()
 	var book := race_book()
 	var name := Sync._chapter_id_of(book.chapters[3], 3) + ".json"
-	check("chapter sent again", name in await server_files("books/%s/" % Sync._folder_name(Library.sync_key(book))), true)
+	check("chapter sent again", name in await server_files("books/%s/" % SyncChapters.folder_name(Library.sync_key(book))), true)
 
 
 func b_gone_after() -> void:
