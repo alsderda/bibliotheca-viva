@@ -571,9 +571,7 @@ func _save_current(announce: bool) -> void:
 	var idx := Library.chapter_index(book, _chapter_url())
 	var title: String = info.get("chapterTitle", "Chapter")
 	if idx < 0:
-		book.chapters.append({"title": title, "url": _chapter_url(), "date": Time.get_unix_time_from_system()})
-		idx = book.chapters.size() - 1
-		Library.update_book(book.id, {"chapters": book.chapters})
+		idx = Library.add_chapter(book.id, title, _chapter_url())
 	var html := "".join(info.paragraphs.map(func(p): return str(p.h)))
 	var paras := HtmlText.to_paragraphs(html)
 	if paras.is_empty():

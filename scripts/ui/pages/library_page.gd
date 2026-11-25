@@ -275,15 +275,15 @@ func _filtered() -> Array:
 			continue
 		match tab:
 			READING_TAB:
-				if not Library.is_reading(b): continue
+				if not BookStatus.is_reading(b): continue
 			EBOOKS_TAB:
 				if b.kind == "web": continue
 			WEB_TAB:
 				if b.kind != "web": continue
 			FAVORITES_TAB:
-				if not Library.is_favorite(b): continue
+				if not BookStatus.is_favorite(b): continue
 			ARCHIVE_TAB:
-				if not Library.is_archived(b): continue
+				if not BookStatus.is_archived(b): continue
 		if _filter_text != "" and not (_filter_text.to_lower() in (b.title + " " + b.author + " " + " ".join(PackedStringArray(b.get("tags", [])))).to_lower()):
 			continue
 		if _source != "" and b.source != _source:
@@ -301,7 +301,7 @@ func _filtered() -> Array:
 ## favorites: a favorite you reread now and then stays at hand without coming
 ## back to Reading every time.
 func _archive_hides(book: Dictionary) -> bool:
-	return Library.is_archived(book) and tab != ARCHIVE_TAB and tab != FAVORITES_TAB
+	return BookStatus.is_archived(book) and tab != ARCHIVE_TAB and tab != FAVORITES_TAB
 
 
 ## The stored sort key, "recent" for anything unexpected.
@@ -506,7 +506,7 @@ func _hero(book: Dictionary) -> Control:
 	sub.custom_minimum_size.x = 120
 	var details := UI.vbox(6)
 	details.add_child(sub)
-	var bar := UI.progress(Library.progress_ratio(book), 4)
+	var bar := UI.progress(BookStatus.progress_ratio(book), 4)
 	bar.custom_minimum_size.x = 120
 	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	details.add_child(UI.margin(bar, 0, 6, 0, 8))
@@ -602,7 +602,7 @@ func _import_files(paths: PackedStringArray) -> void:
 func _show_menu(id: String, at: Vector2) -> void:
 	_menu_book = id
 	var book := Library.get_book(id)
-	var archived := Library.is_archived(book)
+	var archived := BookStatus.is_archived(book)
 	_menu.set_item_disabled(_menu.get_item_index(1), book.kind != "web" or archived)
 	_menu.set_item_tooltip(_menu.get_item_index(1), "Archived books are only checked from their chapter list" if archived and book.kind == "web" else "")
 	_menu.set_item_disabled(_menu.get_item_index(3), Library.editable_fields(book).is_empty())

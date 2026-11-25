@@ -125,24 +125,6 @@ func last_read() -> Dictionary:
 	return best
 
 
-func progress_ratio(book: Dictionary) -> float:
-	var n: int = book.get("chapters", []).size()
-	if n == 0:
-		return 0.0
-	return clampf(float(book.progress.chapter + 1) / n, 0.0, 1.0) if book.get("last_read", 0) > 0 else 0.0
-
-
-## Read up to the last chapter (a serial with new chapters is no longer finished).
-func is_finished(book: Dictionary) -> bool:
-	var n: int = book.get("chapters", []).size()
-	return n > 0 and book.get("last_read", 0) > 0 and book.progress.chapter >= n - 1
-
-
-## Started and not finished, dropped or archived: what the library's Reading tab shows.
-func is_reading(book: Dictionary) -> bool:
-	return book.get("last_read", 0) > 0 and not book.get("dropped", false) and not book.get("archived", false) and not is_finished(book)
-
-
 # --- mutations ---------------------------------------------------------------
 
 func add_book(data: Dictionary) -> Dictionary:
@@ -173,6 +155,16 @@ func update_book(id: String, fields: Dictionary) -> void:
 	book_changed.emit(id)
 	changed.emit()
 
+
+## Adds a chapter (a page read in the Web tab, say) to the end of a book's list. -> its index, or -1 for no such book
+func add_chapter(id: String, title: String, url: String) -> int:
+	var b := get_book(id)
+	if b.is_empty():
+		return -1
+	var chapters: Array = b.chapters.duplicate()
+	chapters.append({"title": title, "url": url, "date": Time.get_unix_time_from_system()})
+	update_book(id, {"chapters": chapters})
+	return chapters.size() - 1
 
 ## tombstone: record the removal so synced devices remove the book too.
 func remove_book(id: String, tombstone := true) -> void:
@@ -210,7 +202,7 @@ func set_dropped(id: String, dropped: bool) -> void:
 
 ## Archiving takes a book out of the library's Reading, All, Ebooks and Web
 ## serials tabs, out of "continue reading" (last_read) and out of Updates, whose
-## Check for updates skips it (see UpdatesPage.followed); the Archive tab shows
+## Check for updates skips it (see BookStatus.followed); the Archive tab shows
 ## it, and Favorites still does if it's a favorite: a favorite you reread now and
 ## then without wanting it in Reading every time. Unlike dropped, opening the book
 ## doesn't undo it; only set_archived(id, false) does.
@@ -233,14 +225,6 @@ func _set_status(id: String, field: String, value: bool) -> void:
 	var stamps: Dictionary = (b.status_set as Dictionary).duplicate() if b.get("status_set") is Dictionary else {}
 	stamps[field] = Time.get_unix_time_from_system()
 	update_book(id, {field: value, "status_set": stamps})
-
-
-static func is_archived(book: Dictionary) -> bool:
-	return book.get("archived", false)
-
-
-static func is_favorite(book: Dictionary) -> bool:
-	return book.get("favorite", false)
 
 
 # --- bookmarks ---------------------------------------------------------------
@@ -1341,7 +1325,7 @@ static func _keep_damaged(path: String) -> void:
 	DirAccess.rename_absolute(path, "%s.bad-%d" % [path, int(Time.get_unix_time_from_system())])
 
 
-## Fills in what the load loop and progress_ratio/is_finished read straight
+## Fills in what the load loop and BookStatus read straight
 ## off a book, so a meta file with missing or wrongly typed fields loads
 ## instead of crashing: progress defaults to the start, chapters to none, and
 ## bookmarks to only well-formed ones.

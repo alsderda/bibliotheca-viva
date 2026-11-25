@@ -32,7 +32,7 @@ func setup(book: Dictionary, width := 168.0) -> void:
 	cover.radius = 10
 	cover.set_book(book)
 	_cover_box.add_child(cover)
-	_badge = UI.panel("Badge", UI.label(_badge_text(book), "Small"))
+	_badge = UI.panel("Badge", UI.label(BookStatus.kind_label(book), "Small"))
 	_badge.get_child(0).add_theme_color_override("font_color", Color(1, 1, 1, 0.9))
 	_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_cover_box.add_child(_badge)
@@ -41,11 +41,11 @@ func setup(book: Dictionary, width := 168.0) -> void:
 	_title = UI.label(book.title, "H3")
 	_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	_col.add_child(UI.margin(_title, 2, 4, 2, 0))
-	_author = UI.label(book.author if book.author != "" else _source_name(book), "Small")
+	_author = UI.label(book.author if book.author != "" else BookStatus.source_name(book), "Small")
 	_author.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	_col.add_child(UI.margin(_author, 2, -4, 2, 0))
 
-	var ratio := Library.progress_ratio(book)
+	var ratio := BookStatus.progress_ratio(book)
 	var prog_row := UI.hbox(8)
 	prog_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var bar := UI.progress(ratio, 3)
@@ -90,16 +90,3 @@ func _on_input(e: InputEvent) -> void:
 		# coordinates (like get_global_mouse_position() above).
 		menu_requested.emit(book_id, get_global_transform_with_canvas() * e.position)
 
-
-static func _badge_text(book: Dictionary) -> String:
-	match book.kind:
-		"epub": return "EPUB"
-		"txt": return "TXT"
-	return "RSS" if book.get("rss_only", false) else "WEB"
-
-
-static func _source_name(book: Dictionary) -> String:
-	if book.kind != "web":
-		return "Imported file"
-	var p := Plugins.for_url(book.url)
-	return p.name if p else book.url.get_slice("/", 2).trim_prefix("www.")

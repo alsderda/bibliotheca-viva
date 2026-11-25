@@ -110,16 +110,16 @@ func _versions() -> void:
 
 func _updates_filters() -> void:
 	var book := {"chapters": [{}, {}, {}], "progress": {"chapter": 1, "paragraph": 0}, "last_read": 100}
-	check("updates unread count", UpdatesPage.unread_count(book), 1)
-	check("updates chapter 0 read", UpdatesPage.is_unread(book, 0), false)
-	check("updates chapter 1 read", UpdatesPage.is_unread(book, 1), false)
-	check("updates chapter 2 unread", UpdatesPage.is_unread(book, 2), true)
+	check("updates unread count", BookStatus.unread_count(book), 1)
+	check("updates chapter 0 read", BookStatus.is_unread(book, 0), false)
+	check("updates chapter 1 read", BookStatus.is_unread(book, 1), false)
+	check("updates chapter 2 unread", BookStatus.is_unread(book, 2), true)
 	var done := {"chapters": [{}, {}, {}], "progress": {"chapter": 2, "paragraph": 0}, "last_read": 100}
-	check("updates caught up", UpdatesPage.unread_count(done), 0)
+	check("updates caught up", BookStatus.unread_count(done), 0)
 	var fresh := {"chapters": [{}, {}, {}], "progress": {"chapter": 0, "paragraph": 0}, "last_read": 0}
-	check("updates never opened", UpdatesPage.unread_count(fresh), 3)
-	check("updates never opened chapter 0 unread", UpdatesPage.is_unread(fresh, 0), true)
-	check("updates no chapters", UpdatesPage.unread_count({"chapters": [], "progress": {"chapter": 0, "paragraph": 0}, "last_read": 0}), 0)
+	check("updates never opened", BookStatus.unread_count(fresh), 3)
+	check("updates never opened chapter 0 unread", BookStatus.is_unread(fresh, 0), true)
+	check("updates no chapters", BookStatus.unread_count({"chapters": [], "progress": {"chapter": 0, "paragraph": 0}, "last_read": 0}), 0)
 
 
 ## Icons made while the app is in the background are re-uploaded on resume, into
@@ -549,25 +549,25 @@ func _archive_favorite() -> void:
 	var b := Library.add_book({"title": "Archive test", "kind": "web", "url": "https://example.com/archtest",
 		"chapters": [{"title": "A", "url": "https://example.com/arch/1"}, {"title": "B", "url": "https://example.com/arch/2"}]})
 	Library.set_progress(b.id, 0, 1)
-	check("reading before archiving", Library.is_reading(Library.get_book(b.id)), true)
+	check("reading before archiving", BookStatus.is_reading(Library.get_book(b.id)), true)
 	check("most recently read", Library.last_read().get("id", ""), b.id)
 	Library.set_archived(b.id, true)
-	check("archived", Library.is_archived(Library.get_book(b.id)), true)
-	check("archived book isn't reading", Library.is_reading(Library.get_book(b.id)), false)
+	check("archived", BookStatus.is_archived(Library.get_book(b.id)), true)
+	check("archived book isn't reading", BookStatus.is_reading(Library.get_book(b.id)), false)
 	check("archived book isn't continue reading", Library.last_read().get("id", "") != b.id, true)
-	check("archived book isn't in Updates", UpdatesPage.followed().any(func(x): return x.id == b.id), false)
+	check("archived book isn't in Updates", BookStatus.followed().any(func(x): return x.id == b.id), false)
 	Library.set_favorite(b.id, true)
 	var file: Dictionary = Sync._book_file(Library.get_book(b.id), "")
 	check("archived in the synced file", file.get("archived", false), true)
 	check("favorite in the synced file", file.get("favorite", false), true)
 	check("status changes stamped in the synced file", (file.get("status_set", {}) as Dictionary).keys().size(), 2)
 	Library.set_archived(b.id, false)
-	check("unarchived", Library.is_archived(Library.get_book(b.id)), false)
-	check("favorite kept through the archive", Library.is_favorite(Library.get_book(b.id)), true)
-	check("reading again after unarchiving", Library.is_reading(Library.get_book(b.id)), true)
-	check("back in Updates after unarchiving", UpdatesPage.followed().any(func(x): return x.id == b.id), true)
+	check("unarchived", BookStatus.is_archived(Library.get_book(b.id)), false)
+	check("favorite kept through the archive", BookStatus.is_favorite(Library.get_book(b.id)), true)
+	check("reading again after unarchiving", BookStatus.is_reading(Library.get_book(b.id)), true)
+	check("back in Updates after unarchiving", BookStatus.followed().any(func(x): return x.id == b.id), true)
 	Library.set_favorite(b.id, false)
-	check("unfavorited", Library.is_favorite(Library.get_book(b.id)), false)
+	check("unfavorited", BookStatus.is_favorite(Library.get_book(b.id)), false)
 	Library.remove_book(b.id, false)
 
 

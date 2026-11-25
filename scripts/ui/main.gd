@@ -415,8 +415,8 @@ func _refresh_continue() -> void:
 	t.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	t.custom_minimum_size.x = 110
 	info.add_child(t)
-	info.add_child(UI.label("%d of %d  ·  %d%%" % [book.progress.chapter + 1, book.chapters.size(), int(Library.progress_ratio(book) * 100)], "Small"))
-	var bar := UI.progress(Library.progress_ratio(book), 3)
+	info.add_child(UI.label("%d of %d  ·  %d%%" % [book.progress.chapter + 1, book.chapters.size(), int(BookStatus.progress_ratio(book) * 100)], "Small"))
+	var bar := UI.progress(BookStatus.progress_ratio(book), 3)
 	info.add_child(bar)
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var row := UI.hbox(10, [cover, info])
