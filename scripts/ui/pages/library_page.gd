@@ -18,7 +18,7 @@ var _filter_text := ""
 var _source := ""
 ## The picked plugin's own filters: filter key -> option key.
 var _plugin_filters := {}
-## Tag to show ("" = any), see Library.has_tag.
+## Tag to show ("" = any), see BookTags.has_tag.
 var _tag := ""
 var _show_filters := false  # phones: the filter row is opened from the top bar
 var _content: VBoxContainer
