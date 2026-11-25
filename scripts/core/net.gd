@@ -14,6 +14,8 @@ extends Node
 ## 503) gets a break too: 1 minute at first, growing slowly to an hour while it keeps
 ## failing. Requests to it fail at once until the break is over. An answer resets
 ## the break, and so does restarting the app.
+## A timeout caused by the app being asleep (see asleep_timeout) is tried again once and
+## doesn't count against the site.
 ## A wait a site asked for (Retry-After) still holds after a restart, until it's over,
 ## while "http_keep_waits" is on (the default). Turning the setting off and
 ## restarting clears it.
@@ -54,6 +56,7 @@ var _shared := {}     # key -> Pending
 var _blocked := {}    # queue key -> msec of the last bot check seen
 var _next_ticket := 0
 var _cache_writes := 0
+var _pauses := 0      # times the app went to the background (Android: screen locked, app switched)
 
 
 class Lane:
@@ -76,6 +79,11 @@ func _ready() -> void:
 	_prune_cache.call_deferred(false)
 	_prune_cache.call_deferred(true)
 	_restore_waits()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_PAUSED:
+		_pauses += 1
 
 
 ## Domains of the installed plugins and the gap each wants: {domain: seconds}.
@@ -102,12 +110,18 @@ func blocked_since(url: String, since_msec: int) -> bool:
 	return int(_blocked.get(lane_key(url), -1)) >= since_msec
 
 
-## Ends the break of `url`'s site for not answering, so the next request goes out
-## (the user asked to try again). If it fails again, the next break is still longer.
+## Ends the break of `url`'s site for not answering, so the next request goes out now
+## (the user asked to try again), without the usual gap after the request that failed.
+## A wait the site asked for (Retry-After) still holds. If it fails again, the next
+## break is still longer.
 func end_break(url: String) -> void:
 	var lane: Lane = _lanes.get(lane_key(url))
-	if lane:
-		lane.down_until = 0
+	if lane == null:
+		return
+	var now := Time.get_ticks_msec()
+	if lane.down_until > now and lane.next_start <= now + int(lane.gap * 1000):
+		lane.next_start = now
+	lane.down_until = 0
 
 
 ## Returns {ok, code, body: PackedByteArray, headers: PackedStringArray, error}.
@@ -265,6 +279,32 @@ func _release(lane: Lane) -> void:
 
 
 func _send(url: String, headers: PackedStringArray, timeout: float, method: int, body: String) -> Dictionary:
+	var r := {}
+	for attempt in 2:
+		var pauses := _pauses
+		var t := Time.get_ticks_msec()
+		r = await _send_once(url, headers, timeout, method, body)
+		if attempt > 0 or not asleep_timeout(r.get("result", HTTPRequest.RESULT_SUCCESS), AppLog.since(t), timeout, _pauses != pauses):
+			break
+		AppLog.info("net", "%s timed out because the app was asleep, trying again" % url.get_slice("?", 0))
+		# One frame gets past the wake-up frame, then a short wait gives the network a moment to come back.
+		await get_tree().process_frame
+		await get_tree().create_timer(1.0).timeout
+	return r
+
+
+## Whether a failed request failed because the app was asleep rather than because the
+## site didn't answer. HTTPRequest times out on frame time, and the first frame after
+## Android wakes the app spans the whole time it slept, so a request started around
+## then times out in a few milliseconds. A request the app slept through had its
+## connection frozen, so its timeout says nothing about the site either.
+static func asleep_timeout(result: int, elapsed_ms: int, timeout: float, slept: bool) -> bool:
+	if result != HTTPRequest.RESULT_TIMEOUT:
+		return false
+	return slept or elapsed_ms < int(timeout * 1000) - 1000
+
+
+func _send_once(url: String, headers: PackedStringArray, timeout: float, method: int, body: String) -> Dictionary:
 	var http := HTTPRequest.new()
 	http.timeout = timeout
 	http.max_redirects = 8
