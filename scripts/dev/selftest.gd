@@ -963,8 +963,10 @@ func _fetch_manager() -> void:
 	check("down site: nothing sent during its break", [r.code, r2.ok, _hits.size(), Time.get_ticks_msec() - t < 450], [502, false, 1, true])
 	check("next break is longer", Net._lanes["127.0.0.1"].down_wait, Net.DOWN_WAIT_FIRST * Net.DOWN_WAIT_GROWTH)
 	Net.end_break(base + "/x")
+	t = Time.get_ticks_msec()
 	r = await Net.get_text(base + "/retry")
 	check("retry ends the break", [r.ok, _hits.size()], [true, 2])
+	check("retry skips the gap after the failed request", Time.get_ticks_msec() - t < 400, true)
 
 	# A timeout from the app waking up is tried again, and the site isn't put on a break. Stalling
 	# the main thread longer than the timeout makes the next frame's delta span it, as waking does.

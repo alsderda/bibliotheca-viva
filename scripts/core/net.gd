@@ -110,12 +110,18 @@ func blocked_since(url: String, since_msec: int) -> bool:
 	return int(_blocked.get(lane_key(url), -1)) >= since_msec
 
 
-## Ends the break of `url`'s site for not answering, so the next request goes out
-## (the user asked to try again). If it fails again, the next break is still longer.
+## Ends the break of `url`'s site for not answering, so the next request goes out now
+## (the user asked to try again), without the usual gap after the request that failed.
+## A wait the site asked for (Retry-After) still holds. If it fails again, the next
+## break is still longer.
 func end_break(url: String) -> void:
 	var lane: Lane = _lanes.get(lane_key(url))
-	if lane:
-		lane.down_until = 0
+	if lane == null:
+		return
+	var now := Time.get_ticks_msec()
+	if lane.down_until > now and lane.next_start <= now + int(lane.gap * 1000):
+		lane.next_start = now
+	lane.down_until = 0
 
 
 ## Returns {ok, code, body: PackedByteArray, headers: PackedStringArray, error}.
