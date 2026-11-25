@@ -281,7 +281,7 @@ func _send(url: String, headers: PackedStringArray, timeout: float, method: int,
 		if attempt > 0 or not asleep_timeout(r.get("result", HTTPRequest.RESULT_SUCCESS), AppLog.since(t), timeout, _pauses != pauses):
 			break
 		AppLog.info("net", "%s timed out because the app was asleep, trying again" % url.get_slice("?", 0))
-		# One frame gets past the wake-up frame; the second's wait gives the network a moment to come back.
+		# One frame gets past the wake-up frame, then a short wait gives the network a moment to come back.
 		await get_tree().process_frame
 		await get_tree().create_timer(1.0).timeout
 	return r
