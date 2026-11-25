@@ -44,8 +44,7 @@ var _contents_list: VBoxContainer
 var _open_groups := {}  # start index -> true for each expanded Contents group
 var _contents_book := "" # book id `_open_groups` belongs to
 var _details_view: Control
-var _bookmarks_view: Control
-var _bookmarks_list: VBoxContainer
+var bookmarks: ReaderBookmarks
 var _menu_paragraph := -1        # paragraph the context menu was opened on
 var _press_timer: Timer          # long-press on a paragraph (touch screens)
 var _press_at := Vector2.ZERO
@@ -97,7 +96,8 @@ func _ready() -> void:
 	_details_view = Control.new()
 	_details_view.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(_details_view)
-	_build_bookmarks_view()
+	bookmarks = ReaderBookmarks.new(self)
+	bookmarks.build_view()
 	_build_aa_popup()
 
 	_save_timer = Timer.new()
@@ -177,7 +177,7 @@ func _on_tab(i: int) -> void:
 	_contents_view.visible = i == 1
 	_search_view.visible = i == SEARCH_TAB
 	_details_view.visible = i == DETAILS_TAB
-	_bookmarks_view.visible = i == BOOKMARKS_TAB
+	bookmarks.view.visible = i == BOOKMARKS_TAB
 	if i == 1:
 		_build_contents()
 	elif i == SEARCH_TAB:
@@ -185,7 +185,7 @@ func _on_tab(i: int) -> void:
 	elif i == DETAILS_TAB:
 		_build_details()
 	elif i == BOOKMARKS_TAB:
-		_build_bookmarks()
+		bookmarks.build()
 
 
 func on_hidden() -> void:
@@ -963,14 +963,14 @@ func set_compact(value: bool) -> void:
 	# The list scrolls vertically only, so anything wider than the screen
 	# pushes the chapter rows (and their download icons) off the right edge.
 	var side := 8 if compact else 24
-	for v in [_contents_view, _bookmarks_view]:
+	for v in [_contents_view, bookmarks.view]:
 		v.add_theme_constant_override("margin_left", side)
 		v.add_theme_constant_override("margin_right", side)
 	_search_view.set_compact(value)
 	if _contents_view.visible:
 		_build_contents()
-	if _bookmarks_view.visible:
-		_build_bookmarks()
+	if bookmarks.view.visible:
+		bookmarks.build()
 	_update_player()
 
 
@@ -1085,79 +1085,6 @@ func _fill_group(box: VBoxContainer, start: int, end: int) -> void:
 
 # --- bookmarks ---------------------------------------------------------------
 
-func _build_bookmarks_view() -> void:
-	_bookmarks_list = UI.vbox(8)
-	var scroll := UI.scroll(UI.margin(_bookmarks_list, 0, 20, 0, 40))
-	_bookmarks_view = UI.margin(scroll, 8 if compact else 24, 0, 8 if compact else 24, 0)
-	_bookmarks_view.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_bookmarks_view.hide()
-	add_child(_bookmarks_view)
-
-
-func _build_bookmarks() -> void:
-	UI.clear(_bookmarks_list)
-	var marks := Library.bookmarks(book)
-	var mobile := OS.has_feature("mobile")
-	var how := "Long-press" if mobile else "Right-click"
-	var pick := "Bookmark" if mobile else "Bookmark this paragraph"
-	var side := 6 if compact else 12
-	_bookmarks_list.add_child(UI.margin(UI.label("%d bookmark%s" % [marks.size(), "" if marks.size() == 1 else "s"], "H2"), side, 0, side, 4))
-	if marks.is_empty():
-		var hint := UI.label("%s a paragraph while reading and choose “%s” to add one. You can give each bookmark a name." % [how, pick], "Muted", true)
-		_bookmarks_list.add_child(UI.margin(hint, side, 0, side, 0))
-		return
-	_bookmarks_list.add_child(UI.margin(UI.label("%s a paragraph while reading to add more." % how, "Small", true), side, 0, side, 8))
-	for m in marks:
-		_bookmarks_list.add_child(_bookmark_row(m))
-
-
-func _bookmark_row(m: Dictionary) -> Control:
-	var pad := Vector4(14, 10, 14, 10)
-	var b := Button.new()
-	b.focus_mode = Control.FOCUS_NONE
-	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	b.tooltip_text = "Go to this bookmark"
-	b.add_theme_stylebox_override("normal", UiTheme.box(Color.TRANSPARENT, 8))
-	b.add_theme_stylebox_override("hover", UiTheme.box(UiTheme.SURFACE_2, 8))
-	b.add_theme_stylebox_override("pressed", UiTheme.box(UiTheme.SURFACE_3, 8))
-	var col := UI.vbox(2)
-	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var heading := UI.label(m.name if m.name != "" else "Untitled bookmark", "H3")
-	heading.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	col.add_child(heading)
-	var ch_title: String = book.chapters[m.chapter].title if m.chapter < book.chapters.size() else ""
-	var where := UI.label("Chapter %d%s" % [m.chapter + 1, (" · " + ch_title) if ch_title != "" else ""], "Small")
-	where.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	where.add_theme_color_override("font_color", UiTheme.ACCENT)
-	col.add_child(where)
-	if m.text != "":
-		var ex := UI.label("“%s”" % m.text, "Small")
-		ex.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-		col.add_child(ex)
-	for l in col.get_children():
-		l.clip_text = true  # long names and quotes mustn't widen the list
-		l.custom_minimum_size.x = 1
-	var inner := UI.margin(col, int(pad.x), int(pad.y), int(pad.z), int(pad.w))
-	inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	inner.set_anchors_preset(Control.PRESET_FULL_RECT)
-	b.add_child(inner)
-	var fit := func(): b.custom_minimum_size.y = inner.get_combined_minimum_size().y
-	inner.minimum_size_changed.connect(fit)
-	fit.call_deferred()
-	b.pressed.connect(func(): go_to_bookmark(m))
-	var row := UI.hbox(4, [b])
-	var edit := UI.icon_button("pencil", "Rename", func(): _rename_bookmark(m))
-	edit.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	row.add_child(edit)
-	var del := UI.icon_button("trash", "Remove bookmark", func():
-		Library.remove_bookmark(book.id, m.id)
-		_after_bookmarks_changed()
-		main.toast("Bookmark removed.", "info"))
-	del.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	row.add_child(del)
-	return row
-
 
 func go_to_bookmark(m: Dictionary) -> void:
 	if m.chapter >= book.chapters.size():
@@ -1178,61 +1105,6 @@ func go_to_bookmark(m: Dictionary) -> void:
 	chapter = m.chapter
 	header_changed.emit()
 	await _load_chapter(m.paragraph)
-
-
-## Opens the dialog to add a bookmark at paragraph i of this chapter, or to rename
-## or remove the one that's there.
-func _edit_bookmark(i: int) -> void:
-	if i < 0 or i >= _items.size():
-		return
-	var existing := Library.bookmark_at(book, chapter, i)
-	var excerpt := _paragraph_excerpt(i)
-	var opts := {
-		"title": "Edit bookmark" if not existing.is_empty() else "Add bookmark", "icon": "bookmark",
-		"text": "Chapter %d · “%s”" % [chapter + 1, excerpt.left(140) + ("…" if excerpt.length() > 140 else "")],
-		"input": existing.get("name", ""), "input_hint": "Name (optional)",
-		"confirm": "Save", "confirm_icon": "check",
-	}
-	var id: String = book.id
-	var at := chapter
-	if not existing.is_empty():
-		var remove := func():
-			Library.remove_bookmark(id, existing.id)
-			_after_bookmarks_changed()
-			main.toast("Bookmark removed.", "info")
-		opts.merge({"alt": "Remove", "alt_icon": "trash", "alt_then": remove})
-	var save := func(typed: String):
-		if book.get("id", "") != id:
-			return
-		if existing.is_empty():
-			Library.add_bookmark(id, at, i, typed, excerpt.left(200))
-			main.toast("Bookmark added.", "ok")
-		else:
-			Library.rename_bookmark(id, existing.id, typed)
-		_after_bookmarks_changed()
-	ConfirmDialog.open(main, opts, save)
-
-
-func _rename_bookmark(m: Dictionary) -> void:
-	ConfirmDialog.open(main, {
-		"title": "Rename bookmark", "icon": "pencil", "text": "“%s”" % m.text.left(140) if m.text != "" else "",
-		"input": m.name, "input_hint": "Name (optional)", "confirm": "Save", "confirm_icon": "check",
-	}, func(typed: String):
-		Library.rename_bookmark(book.id, m.id, typed)
-		_after_bookmarks_changed())
-
-
-func _after_bookmarks_changed() -> void:
-	book = Library.get_book(book.id)
-	_render()
-	if _bookmarks_view.visible:
-		_build_bookmarks()
-
-
-## The shown text of paragraph i, on one line.
-func _paragraph_excerpt(i: int) -> String:
-	var t := _visible_text(_items[i].bb).replace("\n", " ").strip_edges()
-	return RegEx.create_from_string("\\s+").sub(t, " ", true)
 
 
 func _build_details() -> void:
@@ -1924,7 +1796,7 @@ func _on_selection_action(id: int) -> void:
 		SEL_COPY_PARA:
 			_copy_text(_paragraph_plain(_sel_paragraph))
 		SEL_BOOKMARK:
-			_edit_bookmark(_sel_paragraph)
+			bookmarks.edit_bookmark(_sel_paragraph)
 		SEL_MORE:
 			_show_more_menu()
 			return
@@ -1977,7 +1849,7 @@ func _paragraph_at(pos: Vector2) -> int:
 func _on_menu_item(id: int) -> void:
 	if id == MENU_BOOKMARK:
 		if _menu_paragraph >= 0:
-			_edit_bookmark(_menu_paragraph)
+			bookmarks.edit_bookmark(_menu_paragraph)
 		return
 	var sel := _text.get_selected_text().strip_edges()
 	if sel == "" or id < MENU_FIX_SPEECH:
