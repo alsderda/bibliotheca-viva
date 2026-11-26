@@ -4,8 +4,6 @@ extends SettingsSection
 
 
 var _repo_lists := {}   # repo link -> what it lists (cached while the app runs)
-
-
 var _folder_dialog: FileDialog
 
 
@@ -54,9 +52,6 @@ func build() -> void:
 	repo.text_submitted.connect(func(_t): add_repo.call())
 	repo_rows.append(UI.hbox(8, [repo, UI.button("Add", "plus", "", add_repo)]))
 	_section("Plugin repositories", repo_rows)
-
-
-# --- tag aliases -------------------------------------------------------------
 
 
 func _plugin_card(e: Dictionary) -> void:

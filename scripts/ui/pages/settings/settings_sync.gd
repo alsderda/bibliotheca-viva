@@ -4,8 +4,6 @@ extends SettingsSection
 
 
 var _sync_status: Label
-
-
 var _sync_devices: VBoxContainer
 
 

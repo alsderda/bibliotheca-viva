@@ -4,7 +4,6 @@ extends RefCounted
 ## for the Continue book, the read-aloud state, a newer release and plugin status.
 
 const RAIL_WIDTH := 64.0
-
 var nav_buttons := {}  # page key -> its nav button, so the app can show which page is open
 var _main  # the app's main Control, which navigates and opens pages (untyped: it has no class_name)
 var _nav_group := ButtonGroup.new()

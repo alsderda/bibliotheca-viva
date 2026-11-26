@@ -6,7 +6,6 @@ extends RefCounted
 
 const TOP_ROW_HEIGHT := 60.0
 const HOLE_PAD := 8.0  # space kept between the camera hole and the buttons beside it
-
 var _main  # the app's main Control, whose top bar this fits (untyped: it has no class_name)
 ## Screen edges covered by the camera hole or system bars, in UI units (x left,
 ## y top, z right, w bottom). The background still runs under them; controls stay out.

@@ -4,8 +4,6 @@ extends SettingsSection
 
 
 var _alias_drafts: Array = []  # blank tag rows not saved yet (see build)
-
-
 var _alias_rows: Array = []  # [main tag edit, aliases edit] per row, while the Tags tab is built
 
 
@@ -209,6 +207,3 @@ static func _norm_tag(t: String) -> String:
 ## A saved group's aliases as comma-separated text for its row.
 static func _aliases_text(aliases: Variant) -> String:
 	return ", ".join(PackedStringArray(aliases)) if aliases is Array else str(aliases)
-
-
-# --- site rules --------------------------------------------------------------

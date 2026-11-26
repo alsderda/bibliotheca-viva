@@ -157,10 +157,10 @@ func _book_search() -> void:
 	check("snippet marks the match", BookSearch.snippet("a [b] c", Vector2i(2, 5), "f00"), "a [b][color=f00][lb]b[rb][/color][/b] c")
 	check("snippet cuts at spaces", BookSearch.snippet("one two three four five", Vector2i(8, 13), "f00", 5), "…two [b][color=f00]three[/color][/b] four…")
 	var bb := "He [i]said[/i] [lb]hi[rb]"
-	var text := ReaderPage._visible_text(bb)
+	var text := ReaderMarkup.visible_text(bb)
 	check("search text has no tags", text, "He said [hi]")
 	var span: Vector2i = BookSearch.find_all(BookSearch.compile("said [hi", false), text)[0]
-	check("match marked across tags", ReaderPage._mark_span(bb, span.x, span.y, "<", ">"), "He [i]<said>[/i]< [lb]hi>[rb]")
+	check("match marked across tags", ReaderMarkup.mark_span(bb, span.x, span.y, "<", ">"), "He [i]<said>[/i]< [lb]hi>[rb]")
 
 
 func _sites() -> void:
@@ -698,8 +698,8 @@ func _sentences() -> void:
 		["Mr. Smith went home.", "He said “Hi!”", "Then J. R. left…", "Done"])
 	check("invisible filler paragraph is skipped", Array(Speech.split({"text": "ㅤ ​", "kind": "p"})), [])
 	var bb := "One [i]two. Three[/i] [lb]4[rb]."
-	check("visible text", ReaderPage._visible_text(bb), "One two. Three [4].")
-	check("mark sentence across tags", ReaderPage._mark_span(bb, 9, 19, "<", ">"), "One [i]two. <Three>[/i]< [lb]4[rb].>")
+	check("visible text", ReaderMarkup.visible_text(bb), "One two. Three [4].")
+	check("mark sentence across tags", ReaderMarkup.mark_span(bb, 9, 19, "<", ">"), "One [i]two. <Three>[/i]< [lb]4[rb].>")
 	check("resume offset snaps to the cut word's start", LinuxVoice.resume_offset("Hello brave world", 9), 6)
 	check("resume offset at a word start stays", LinuxVoice.resume_offset("Hello brave world", 6), 6)
 	check("resume offset inside the first word restarts", LinuxVoice.resume_offset("Hello world", 3), 0)

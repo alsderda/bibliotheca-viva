@@ -139,5 +139,5 @@ func _after_bookmarks_changed() -> void:
 
 ## The shown text of paragraph i, on one line.
 func _paragraph_excerpt(i: int) -> String:
-	var t := ReaderPage._visible_text(page._items[i].bb).replace("\n", " ").strip_edges()
+	var t := ReaderMarkup.visible_text(page._items[i].bb).replace("\n", " ").strip_edges()
 	return RegEx.create_from_string("\\s+").sub(t, " ", true)

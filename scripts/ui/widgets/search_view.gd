@@ -135,7 +135,7 @@ func _run() -> void:
 		var hits := []  # [paragraph, span, paragraph text]
 		var items := reader.chapter_items(data, i)
 		for p in items.size():
-			var text := ReaderPage._visible_text(items[p].bb)
+			var text := ReaderMarkup.visible_text(items[p].bb)
 			for span in BookSearch.find_all(re, text):
 				hits.append([p, span, text])
 		if hits.is_empty():

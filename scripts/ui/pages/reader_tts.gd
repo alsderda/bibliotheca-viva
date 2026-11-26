@@ -299,7 +299,7 @@ func _anchor(para: int, chunk: int) -> void:
 		_starts.append(off)
 	if _starts.is_empty():
 		return
-	var shown := ReaderPage._visible_text(it.bb)
+	var shown := ReaderMarkup.visible_text(it.bb)
 	var from := 0
 	for k in _chunks.size():
 		var at := shown.find(_chunks[k], from)

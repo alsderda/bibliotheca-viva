@@ -42,15 +42,9 @@ var _rate_btn: Button
 var contents: ReaderContents
 var details: ReaderDetails
 var bookmarks: ReaderBookmarks
-var _menu_paragraph := -1        # paragraph the context menu was opened on
-var _press_timer: Timer          # long-press on a paragraph (touch screens)
-var _press_at := Vector2.ZERO
-var _tap := false                # the current touch is still a plain tap
-var _press_scroll := 0.0         # scroll position when the current touch began
+var popups: ReaderPopups
+var selection: ReaderSelection
 var _read_stack: Control         # the text and the floating bars live here
-var _sel_bar: SelectionBar       # touch selection pop-up over the text
-var _sel_paragraph := -1         # paragraph the selection bar was opened on
-var _sel_popup: PopupMenu        # the bar's "More" menu, if open
 var _sleep_btn: Button
 var _rail_play_btn: Button
 var _rail_more_btn: Button
@@ -64,15 +58,6 @@ var _find := {}                  # search match marked on the Read tab: {paragra
 const SEARCH_TAB := 2
 const DETAILS_TAB := 3
 
-const MENU_FIX_SPEECH := 100
-const MENU_SKIP_SPEECH := 101
-const MENU_REPLACE_TEXT := 102
-const MENU_BOOKMARK := 103
-
-const SEL_COPY := 200
-const SEL_BOOKMARK := 201
-const SEL_MORE := 202
-const SEL_COPY_PARA := 203
 
 const BOOKMARKS_TAB := 4
 
@@ -81,6 +66,7 @@ func _ready() -> void:
 	_bg = ColorRect.new()
 	_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(_bg)
+	selection = ReaderSelection.new(self)
 	_build_read_view()
 	contents = ReaderContents.new(self)
 	contents.build_view()
@@ -93,7 +79,7 @@ func _ready() -> void:
 	details.build_view()
 	bookmarks = ReaderBookmarks.new(self)
 	bookmarks.build_view()
-	_build_aa_popup()
+	popups = ReaderPopups.new(self)
 
 	_save_timer = Timer.new()
 	_save_timer.one_shot = true
@@ -110,8 +96,7 @@ func _ready() -> void:
 		if not book.is_empty() and id == book.id and index == chapter and _excerpt and not Speech.playing:
 			book = Library.get_book(id)
 			_load_chapter(0))
-	_setup_context_menu()
-	_build_tts_popup()
+	selection.setup()
 	var tick := Timer.new()
 	tick.wait_time = 1.0
 	tick.timeout.connect(func(): if Speech.playing and Speech.sleep_minutes > 0: _update_player())
@@ -154,7 +139,7 @@ func build_actions(bar: HBoxContainer) -> void:
 		var nxt := UI.icon_button("chev_right", "Next chapter (→)", func(): go_to_chapter(chapter + 1))
 		nxt.disabled = chapter >= book.get("chapters", []).size() - 1
 		bar.add_child(nxt)
-	var aa := UI.icon_button("type", "Display settings", _show_aa)
+	var aa := UI.icon_button("type", "Display settings", func(): popups.show_aa())
 	aa.name = "AaButton"
 	bar.add_child(aa)
 	_listen_shown = Speech.playing
@@ -166,7 +151,7 @@ func build_actions(bar: HBoxContainer) -> void:
 
 
 func _on_tab(i: int) -> void:
-	_hide_selection_bar()
+	selection.hide_bar()
 	_read_view.visible = i == 0
 	_bg.visible = i == 0
 	contents.view.visible = i == 1
@@ -246,7 +231,7 @@ func _show_rail_more() -> void:
 	_rail_sleep_btn.custom_minimum_size.y = 40
 	content.add_child(UI.hbox(8, [_rail_rate_btn, _rail_sleep_btn]))
 	var voice: Button
-	voice = UI.button("Voice settings", "settings", "", func(): _show_tts_popup(voice))
+	voice = UI.button("Voice settings", "settings", "", func(): popups.show_tts_popup(voice))
 	voice.custom_minimum_size.y = 40
 	var stop := UI.button("Stop", "x", "", func(): Speech.stop(); tts.clear_highlight())
 	stop.custom_minimum_size.y = 40
@@ -294,7 +279,7 @@ func go_to_chapter(index: int, start_tts := false) -> void:
 
 
 func _load_chapter(paragraph: int) -> void:
-	_hide_selection_bar()
+	selection.hide_bar()
 	_load_token += 1
 	var token := _load_token
 	_loading = true
@@ -353,7 +338,7 @@ func _make_items(data: Dictionary, index: int) -> Array:
 	if paras.size() > 0 and not starts_with_title and HtmlText.plain(paras[0]).strip_edges().to_lower() == title.strip_edges().to_lower():
 		paras.remove_at(0)
 	if not starts_with_title:
-		_add_item(items, "title", _esc(title))
+		_add_item(items, "title", ReaderMarkup.esc(title))
 	for p in paras:
 		_add_item(items, "heading" if HtmlText.is_heading(p) else "p", p.replace(HtmlText.HEADING, ""))
 	return items
@@ -407,7 +392,7 @@ func _item_bbcode(i: int, ctx: Dictionary, with_hl: bool) -> String:
 	if with_hl and i == tts.highlight:
 		bb = _highlighted(it, String(ctx.hl), ctx.colors)
 	elif i == _find.get("paragraph", -1):
-		bb = _mark_span(bb, _find.from, _find.to, "[bgcolor=%s]" % Color(UiTheme.WARN, 0.4).to_html(), "[/bgcolor]")
+		bb = ReaderMarkup.mark_span(bb, _find.from, _find.to, "[bgcolor=%s]" % Color(UiTheme.WARN, 0.4).to_html(), "[/bgcolor]")
 	var indent: String = ctx.indent
 	if indent != "" and _indented(it):
 		bb = indent + bb
@@ -560,7 +545,7 @@ func _highlighted(it: Dictionary, hl: String, colors: Dictionary) -> String:
 	var span := _sentence_span(it, tts.highlight_sentence)
 	if span.x < 0:
 		return tags[0] + it.bb + tags[1]
-	return _mark_span(it.bb, span.x, span.y, tags[0], tags[1])
+	return ReaderMarkup.mark_span(it.bb, span.x, span.y, tags[0], tags[1])
 
 
 ## Start and end (in visible characters) of sentence `sentence` of the item's text, or
@@ -570,7 +555,7 @@ func _sentence_span(it: Dictionary, sentence: int) -> Vector2i:
 	if sentence < 0 or Settings.get_value("tts_mode") != "sentence":
 		return Vector2i(-1, -1)
 	var spoken := Speech.split({"text": it.tts, "kind": it.kind})
-	var shown_text := _visible_text(it.bb)
+	var shown_text := ReaderMarkup.visible_text(it.bb)
 	var shown := Speech.split_sentences(shown_text)
 	if spoken.size() != shown.size() or sentence >= shown.size():
 		return Vector2i(-1, -1)
@@ -582,47 +567,6 @@ func _sentence_span(it: Dictionary, sentence: int) -> Vector2i:
 		if k < sentence:
 			from += shown[k].length()
 	return Vector2i(from, from + shown[sentence].length())
-
-
-## The text a bbcode paragraph shows: tags dropped, [lb]/[rb] as brackets.
-static func _visible_text(bb: String) -> String:
-	return _mark_span(bb, 0, 0, "", "", true)
-
-
-## Wraps visible characters `from`..`to` of `bb` in `open`/`close`, closing and reopening
-## around any tag inside so the result stays properly nested. With `text_only`, returns
-## just the visible text instead.
-static func _mark_span(bb: String, from: int, to: int, open: String, close: String, text_only := false) -> String:
-	var out := ""
-	var pos := 0          # visible characters so far
-	var marking := false
-	var i := 0
-	while i < bb.length():
-		var token := bb[i]
-		var visible := true
-		if token == "[":
-			var j := bb.find("]", i)
-			if j != -1:
-				token = bb.substr(i, j - i + 1)
-				visible = token == "[lb]" or token == "[rb]"
-		i += token.length()
-		if text_only:
-			if visible:
-				out += "[" if token == "[lb]" else ("]" if token == "[rb]" else token)
-			continue
-		var inside := visible and pos >= from and pos < to
-		if marking and not inside:
-			out += close
-			marking = false
-		if inside and not marking:
-			out += open
-			marking = true
-		out += token
-		if visible:
-			pos += 1
-	if marking:
-		out += close
-	return out
 
 
 ## Opens chapter `index` at a search match and marks it. If the chapter changed since
@@ -638,10 +582,10 @@ func show_match(index: int, paragraph: int, from: int, matched: String) -> void:
 	if book.get("id", "") != id or chapter != index or _items.is_empty():
 		return  # the chapter didn't load; its status message says why
 	var p := paragraph
-	if p >= _items.size() or _visible_text(_items[p].bb).substr(from, matched.length()) != matched:
+	if p >= _items.size() or ReaderMarkup.visible_text(_items[p].bb).substr(from, matched.length()) != matched:
 		p = -1
 		for k in _items.size():
-			from = _visible_text(_items[k].bb).find(matched)
+			from = ReaderMarkup.visible_text(_items[k].bb).find(matched)
 			if from != -1:
 				p = k
 				break
@@ -755,7 +699,7 @@ func _first_visible() -> int:
 
 
 func _on_scrolled(_v: float) -> void:
-	_hide_selection_bar()
+	selection.hide_bar()
 	_update_footer()
 	_queue_position_highlight()
 	if not _restoring:
@@ -859,10 +803,10 @@ func _build_read_view() -> void:
 	stack.add_child(_text)
 	stack.add_child(hl_clip)
 	_read_stack = stack
-	_sel_bar = SelectionBar.new()
-	_sel_bar.hide()
-	stack.add_child(_sel_bar)
-	_sel_bar.action.connect(_on_selection_action)
+	selection.bar = SelectionBar.new()
+	selection.bar.hide()
+	stack.add_child(selection.bar)
+	selection.bar.action.connect(selection.on_action)
 
 	_status = UI.vbox(14)
 	_status.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -904,7 +848,7 @@ func _build_read_view() -> void:
 	_sleep_btn = UI.button("", "moon", "GhostButton", Speech.cycle_sleep, UiTheme.MUTED)
 	_sleep_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	prow.add_child(_sleep_btn)
-	var tts_settings := UI.icon_button("settings", "Voice settings", _show_tts_popup)
+	var tts_settings := UI.icon_button("settings", "Voice settings", func(): popups.show_tts_popup())
 	tts_settings.name = "TtsSettingsButton"
 	prow.add_child(tts_settings)
 	prow.add_child(UI.icon_button("x", "Stop", func(): Speech.stop(); tts.clear_highlight()))
@@ -945,7 +889,7 @@ func set_compact(value: bool) -> void:
 	super(value)
 	if contents == null:
 		return
-	_hide_selection_bar()
+	selection.hide_bar()
 	# The list scrolls vertically only, so anything wider than the screen
 	# pushes the chapter rows (and their download icons) off the right edge.
 	var side := 8 if compact else 24
@@ -960,8 +904,7 @@ func set_compact(value: bool) -> void:
 	_update_player()
 
 
-# --- bookmarks ---------------------------------------------------------------
-
+# --- bookmarks (the tab is ReaderBookmarks) -----------------------------------
 
 func go_to_bookmark(m: Dictionary) -> void:
 	if m.chapter >= book.chapters.size():
@@ -984,93 +927,7 @@ func go_to_bookmark(m: Dictionary) -> void:
 	await _load_chapter(m.paragraph)
 
 
-func _build_aa_popup() -> void:
-	pass
-
-
-func _aa_content() -> Control:
-	var col := UI.vbox(14)
-	col.custom_minimum_size.x = 300
-	col.add_child(UI.label("Theme", "Overline"))
-	var themes := UI.hbox(8)
-	for key in ["dark", "sepia", "light"]:
-		var c: Dictionary = Settings.READER_THEMES[key]
-		var b := Button.new()
-		b.text = key.capitalize()
-		b.focus_mode = Control.FOCUS_NONE
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.custom_minimum_size.y = 40
-		b.add_theme_stylebox_override("normal", UiTheme.box(c.bg, 8, UiTheme.BORDER, 1))
-		b.add_theme_stylebox_override("hover", UiTheme.box(c.bg, 8, UiTheme.MUTED, 1))
-		b.add_theme_stylebox_override("pressed", UiTheme.box(c.bg, 8, UiTheme.ACCENT, 2))
-		for k in ["font_color", "font_hover_color", "font_pressed_color"]:
-			b.add_theme_color_override(k, c.text)
-		b.pressed.connect(func(): Settings.set_value("reader_theme", key))
-		b.set_meta("theme_key", key)
-		themes.add_child(b)
-	col.add_child(themes)
-	col.add_child(UI.label("Font", "Overline"))
-	var fonts := UI.hbox(8)
-	for f in [["serif", "Literata"], ["sans", "Inter"]]:
-		var b := UI.button(f[1], "", "ChipButton", func(): Settings.set_value("reader_font", f[0]))
-		b.add_theme_font_override("font", UiTheme.serif if f[0] == "serif" else UiTheme.sans)
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		fonts.add_child(b)
-	col.add_child(fonts)
-	col.add_child(_stepper("Text size", "font_size", 14, 34, 1))
-	col.add_child(UI.label("Alignment", "Overline"))
-	col.add_child(SettingsPage.segmented_row("text_align", ALIGN_OPTIONS))
-	col.add_child(_stepper("Line spacing", "line_spacing", 0, 20, 2))
-	col.add_child(_stepper("Paragraph spacing", "paragraph_gap", 0, 60, 2))
-	col.add_child(_stepper("Text width", "column_width", 360, 1600, 40))
-	col.add_child(_stepper("Side margins", "side_margin", 0, 160, 4))
-	var indent := CheckButton.new()
-	indent.text = "Indent first line"
-	indent.focus_mode = Control.FOCUS_NONE
-	indent.button_pressed = bool(Settings.get_value("first_line_indent"))
-	indent.toggled.connect(func(v): Settings.set_value("first_line_indent", v))
-	col.add_child(indent)
-	var rules_btn := UI.button("Text & speech rules", "replace", "", func():
-		close_aa()
-		main.pages.settings.tab = 2
-		main.navigate("settings"))
-	rules_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	col.add_child(rules_btn)
-	return col
-
-
 const ALIGN_OPTIONS := [["left", "Left"], ["justify", "Justified"], ["center", "Centred"]]
-
-
-func _stepper(label: String, key: String, lo: int, hi: int, step: int) -> Control:
-	var row := UI.hbox(8)
-	var l := UI.label(label, "Muted")
-	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(l)
-	var value := UI.label(str(int(Settings.get_value(key))), "H3")
-	value.custom_minimum_size.x = 44
-	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	var minus := UI.icon_button("chev_left", "Less", func():
-		Settings.set_value(key, clampi(int(Settings.get_value(key)) - step, lo, hi)); value.text = str(int(Settings.get_value(key))))
-	var plus := UI.icon_button("chev_right", "More", func():
-		Settings.set_value(key, clampi(int(Settings.get_value(key)) + step, lo, hi)); value.text = str(int(Settings.get_value(key))))
-	row.add_child(minus)
-	row.add_child(value)
-	row.add_child(plus)
-	return row
-
-
-var _aa_node: Popover
-
-
-func _show_aa() -> void:
-	var btn: Control = main.find_child("AaButton", true, false)
-	_aa_node = Popover.show_for(btn, _aa_content())
-
-
-func close_aa() -> void:
-	if is_instance_valid(_aa_node):
-		_aa_node.close()
 
 
 # --- style -------------------------------------------------------------------
@@ -1145,7 +1002,7 @@ func _set_status_colors(c: Dictionary) -> void:
 func _apply_layout() -> void:
 	if _text == null:
 		return
-	_hide_selection_bar()
+	selection.hide_bar()
 	var col := float(Settings.get_value("column_width"))
 	var w := _text.size.x
 	var side := maxf(float(Settings.get_value("side_margin")), (w - col) / 2.0)
@@ -1217,243 +1074,10 @@ func _fit_player() -> void:
 		_player.remove_theme_stylebox_override("panel")
 
 
-# --- quick voice settings (player bar) ---------------------------------------
-
-func _build_tts_popup() -> void:
-	pass
-
-
-func _tts_content() -> Control:
-	var col := UI.vbox(12)
-	col.custom_minimum_size.x = 340
-	col.add_child(UI.label("Reading aloud", "H3"))
-	col.add_child(SettingsPage.slider_row("Speed", "tts_rate", 0.5, 3.0, 0.05, "%.2fx", 140))
-	col.add_child(SettingsPage.slider_row("Pitch", "tts_pitch", 0.5, 1.5, 0.05, "%.2f", 140))
-	col.add_child(SettingsPage.slider_row("Paragraph pause", "tts_pause_paragraph", 0, 3000, 50, "%d ms", 140))
-	col.add_child(SettingsPage.slider_row("Heading pause", "tts_pause_heading", 0, 4000, 50, "%d ms", 140))
-	col.add_child(SettingsPage.slider_row("Sentence pause", "tts_pause_sentence", 0, 2000, 25, "%d ms", 140))
-	col.add_child(SettingsPage.segmented_row("tts_mode", [["paragraph", "Paragraphs"], ["sentence", "Sentences"]]))
-	col.add_child(UI.label("Sentence pauses apply in Sentences mode. Changes apply from the next sentence.", "Small", true))
-	col.add_child(UI.button("All voice settings", "settings", "", func():
-		if _tts_popup_node: _tts_popup_node.close()
-		main.pages.settings.tab = 1
-		main.navigate("settings")))
-	return col
-
-
-var _tts_popup_node: Popover
-
-
-func _show_tts_popup(anchor: Control = null) -> void:
-	var btn: Control = anchor if is_instance_valid(anchor) else find_child("TtsSettingsButton", true, false)
-	_tts_popup_node = Popover.show_for(btn if btn else _player, _tts_content(), true)
-
-
-func close_tts_popup() -> void:
-	if is_instance_valid(_tts_popup_node):
-		_tts_popup_node.close()
-
-
-# --- create rules from selected text -----------------------------------------
-
-func _setup_context_menu() -> void:
-	var menu := _text.get_menu()
-	menu.add_separator()
-	menu.add_item("Fix pronunciation of selection…", MENU_FIX_SPEECH)
-	menu.add_item("Don't read selection aloud…", MENU_SKIP_SPEECH)
-	menu.add_item("Replace selection in text…", MENU_REPLACE_TEXT)
-	menu.add_separator()
-	menu.add_item("Bookmark this paragraph…", MENU_BOOKMARK)
-	menu.id_pressed.connect(_on_menu_item)
-	menu.about_to_popup.connect(func():
-		var has := _text.get_selected_text().strip_edges() != ""
-		for id in [MENU_FIX_SPEECH, MENU_SKIP_SPEECH, MENU_REPLACE_TEXT]:
-			menu.set_item_disabled(menu.get_item_index(id), not has)
-		var bi := menu.get_item_index(MENU_BOOKMARK)
-		menu.set_item_disabled(bi, _menu_paragraph < 0)
-		var marked := _menu_paragraph >= 0 and not Library.bookmark_at(book, chapter, _menu_paragraph).is_empty()
-		menu.set_item_text(bi, "Edit bookmark…" if marked else "Bookmark this paragraph…"))
-	_text.gui_input.connect(_on_text_input)
-	_press_timer = Timer.new()
-	_press_timer.one_shot = true
-	_press_timer.wait_time = 0.6
-	_press_timer.timeout.connect(func():
-		_tap = false
-		# Off until the finger lifts: jitter of a held finger across a line edge
-		# would otherwise select a line's worth of text under the bar.
-		_text.selection_enabled = false
-		_text.focus_mode = Control.FOCUS_CLICK
-		_show_selection_bar(_press_at))
-	add_child(_press_timer)
-
-
-## Notes the paragraph under a right-click (for the menu). On touch screens a
-## long press or a touch release after selecting pops up the selection bar,
-## since there is no right-click.
-func _on_text_input(e: InputEvent) -> void:
-	if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_RIGHT:
-		_menu_paragraph = _paragraph_at(e.position)
-	elif e is InputEventScreenTouch:
-		if e.pressed:
-			_press_at = e.position
-			_press_scroll = _text.get_v_scroll_bar().value
-			_tap = not e.double_tap
-			_hide_selection_bar()
-			if _tap:
-				_press_timer.start()
-		else:
-			_press_timer.stop()
-			var long_press := not _text.selection_enabled
-			if long_press:
-				_text.selection_enabled = true
-				_text.focus_mode = Control.FOCUS_CLICK
-			# A press only moves the nearest end of an existing selection (the label
-			# gets the emulated mouse press before this touch event), so without
-			# this a touch screen could never dismiss a selection. After a long
-			# press the label still holds what the jitter selected and brings it back.
-			# A slow swipe both scrolls and selects; the selection is a side effect.
-			var scrolled := absf(_text.get_v_scroll_bar().value - _press_scroll) > 1.0
-			if _tap or long_press or scrolled:
-				_text.deselect.call_deferred()
-			else:
-				_maybe_show_selection_bar.call_deferred(e.position)
-	elif e is InputEventScreenDrag and e.position.distance_to(_press_at) > 12:
-		_tap = false
-		_press_timer.stop()
-
-
-## Shows the selection bar after a touch release, once the label has caught up
-## with the touch. Only when text ended up selected, so taps and scrolls do nothing.
-func _maybe_show_selection_bar(anchor: Vector2) -> void:
-	if _text.get_selected_text().strip_edges() == "":
-		return
-	_show_selection_bar(anchor)
-
-
-## Shows the selection bar at a touch point: Copy, Bookmark and More when text
-## is selected, Bookmark and Copy paragraph on a long press with no selection.
-func _show_selection_bar(anchor: Vector2) -> void:
-	if _items.is_empty():
-		return
-	var i := _paragraph_at(anchor)
-	if i < 0:
-		return
-	_sel_paragraph = i
-	_sel_bar.show_at(anchor, Rect2(Vector2.ZERO, _read_stack.size),
-		_selection_actions(_text.get_selected_text().strip_edges() != "", _bookmarked(i)))
-
-
-## Hides the selection bar and its More menu, if either is open.
-func _hide_selection_bar() -> void:
-	if is_instance_valid(_sel_bar):
-		_sel_bar.hide()
-	if is_instance_valid(_sel_popup):
-		_sel_popup.hide()
-		_sel_popup = null
-
-
-## Whether paragraph i of this chapter already has a bookmark.
-func _bookmarked(i: int) -> bool:
-	return i >= 0 and not Library.bookmark_at(book, chapter, i).is_empty()
-
-
-## The buttons for the touch selection bar: Copy, Bookmark and More with a
-## selection; Bookmark and Copy paragraph without one.
-static func _selection_actions(has_selection: bool, bookmarked: bool) -> Array:
-	var mark := {"id": SEL_BOOKMARK, "text": "Edit bookmark" if bookmarked else "Bookmark",
-		"icon": "bookmark_fill" if bookmarked else "bookmark"}
-	if not has_selection:
-		return [mark, {"id": SEL_COPY_PARA, "text": "Copy paragraph", "icon": "copy"}]
-	return [{"id": SEL_COPY, "text": "Copy", "icon": "copy"}, mark,
-		{"id": SEL_MORE, "text": "More", "icon": "more"}]
-
-
-func _on_selection_action(id: int) -> void:
-	match id:
-		SEL_COPY:
-			_copy_text(_text.get_selected_text().strip_edges())
-			_text.deselect()
-		SEL_COPY_PARA:
-			_copy_text(_paragraph_plain(_sel_paragraph))
-		SEL_BOOKMARK:
-			bookmarks.edit_bookmark(_sel_paragraph)
-		SEL_MORE:
-			_show_more_menu()
-			return
-	_hide_selection_bar()
-
-
-## Copies text to the clipboard, if there is any, and says so.
-func _copy_text(s: String) -> void:
-	if s == "":
-		return
-	DisplayServer.clipboard_set(s)
-	main.toast("Copied.", "ok")
-
-
-## The paragraph's shown text, without BBCode, for copying.
-func _paragraph_plain(i: int) -> String:
-	if i < 0 or i >= _items.size():
-		return ""
-	return _visible_text(_items[i].bb).strip_edges()
-
-
-## The three selection rule actions as a pop-up, reusing the menu logic.
-func _show_more_menu() -> void:
-	_hide_selection_bar()
-	var menu := PopupMenu.new()
-	menu.add_item("Fix pronunciation of selection…", MENU_FIX_SPEECH)
-	menu.add_item("Don't read selection aloud…", MENU_SKIP_SPEECH)
-	menu.add_item("Replace selection in text…", MENU_REPLACE_TEXT)
-	add_child(menu)
-	_sel_popup = menu
-	menu.id_pressed.connect(_on_menu_item)
-	menu.popup_hide.connect(func(): menu.queue_free())
-	var r := _sel_bar.get_global_rect()
-	menu.popup(Rect2i(Vector2i(int(r.position.x), int(r.end.y + 4)), Vector2i.ZERO))
-
-
-## The paragraph at a point in the text view, or -1.
-func _paragraph_at(pos: Vector2) -> int:
-	if _items.is_empty():
-		return -1
-	var y := pos.y - _text.get_theme_stylebox("normal").content_margin_top + _text.get_v_scroll_bar().value
-	var found := 0
-	for i in _items.size():
-		if _text.get_paragraph_offset(i) > y:
-			break
-		found = i
-	return found
-
-
-func _on_menu_item(id: int) -> void:
-	if id == MENU_BOOKMARK:
-		if _menu_paragraph >= 0:
-			bookmarks.edit_bookmark(_menu_paragraph)
-		return
-	var sel := _text.get_selected_text().strip_edges()
-	if sel == "" or id < MENU_FIX_SPEECH:
-		return
-	var context := _paragraph_containing(sel)
-	match id:
-		MENU_FIX_SPEECH:
-			open_rule_editor({"pattern": sel, "replace": sel, "scope": "tts", "whole_word": true, "book": book.id}, context)
-		MENU_SKIP_SPEECH:
-			open_rule_editor({"pattern": sel, "replace": " ", "scope": "tts", "book": book.id}, context)
-		MENU_REPLACE_TEXT:
-			open_rule_editor({"pattern": sel, "replace": "", "scope": "display", "book": book.id}, context)
-
+# --- text rules from selected text (the selection itself is ReaderSelection) ---
 
 func open_rule_editor(rule: Dictionary, sample := "") -> RuleEditor:
 	return RuleEditor.open(main, rule, book.get("id", ""), sample)
-
-
-func _paragraph_containing(text: String) -> String:
-	for p in _data.get("paragraphs", []):
-		var plain := HtmlText.plain(p)
-		if plain.find(text) != -1:
-			return plain
-	return text
 
 
 func _cycle_rate() -> void:
@@ -1491,5 +1115,3 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	get_viewport().set_input_as_handled()
 
 
-static func _esc(s: String) -> String:
-	return s.replace("[", "\u0002").replace("]", "[rb]").replace("\u0002", "[lb]")

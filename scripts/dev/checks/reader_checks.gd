@@ -218,34 +218,34 @@ func run(t: Node) -> void:
 	var bar := SelectionBar.new()
 	t.add_child(bar)
 	var bounds := Rect2(0, 0, 400, 800)
-	bar.show_at(Vector2(200, 400), bounds, ReaderPage._selection_actions(true, false))
+	bar.show_at(Vector2(200, 400), bounds, ReaderSelection.actions(true, false))
 	t.check("selection bar opens above the anchor when there is room",
 		bar.visible and bar.position.y + bar.size.y <= 400, true)
 	t.check("selection bar stays inside bounds",
 		bounds.encloses(Rect2(bar.position, bar.size)), true)
-	bar.show_at(Vector2(200, 10), bounds, ReaderPage._selection_actions(true, false))
+	bar.show_at(Vector2(200, 10), bounds, ReaderSelection.actions(true, false))
 	t.check("selection bar opens below the anchor at the top edge", bar.position.y > 10, true)
 	t.check("selection bar stays inside bounds at the top edge",
 		bounds.encloses(Rect2(bar.position, bar.size)), true)
-	var ids := ReaderPage._selection_actions(true, false).map(func(a): return a.id)
+	var ids := ReaderSelection.actions(true, false).map(func(a): return a.id)
 	t.check("selection actions are copy, bookmark and more",
-		ids == [ReaderPage.SEL_COPY, ReaderPage.SEL_BOOKMARK, ReaderPage.SEL_MORE], true)
-	var plain_ids := ReaderPage._selection_actions(false, false).map(func(a): return a.id)
+		ids == [ReaderSelection.SEL_COPY, ReaderSelection.SEL_BOOKMARK, ReaderSelection.SEL_MORE], true)
+	var plain_ids := ReaderSelection.actions(false, false).map(func(a): return a.id)
 	t.check("no-selection actions are bookmark and copy paragraph",
-		plain_ids == [ReaderPage.SEL_BOOKMARK, ReaderPage.SEL_COPY_PARA], true)
-	var marked: Dictionary = ReaderPage._selection_actions(true, true)[1]
+		plain_ids == [ReaderSelection.SEL_BOOKMARK, ReaderSelection.SEL_COPY_PARA], true)
+	var marked: Dictionary = ReaderSelection.actions(true, true)[1]
 	t.check("bookmarked paragraph offers editing",
 		marked.text == "Edit bookmark" and marked.icon == "bookmark_fill", true)
-	var fresh: Dictionary = ReaderPage._selection_actions(true, false)[1]
+	var fresh: Dictionary = ReaderSelection.actions(true, false)[1]
 	t.check("plain paragraph offers bookmarking",
 		fresh.text == "Bookmark" and fresh.icon == "bookmark", true)
 	# A long press with no selection still pops the bar up (bookmark path).
-	page._show_selection_bar(Vector2(20, 100))
-	t.check("long press shows the bar without a selection", page._sel_bar.visible, true)
+	page.selection.show_bar(Vector2(20, 100))
+	t.check("long press shows the bar without a selection", page.selection.bar.visible, true)
 	t.check("long press without a selection offers bookmarking",
-		page._sel_bar._row.get_child_count() == 2, true)
+		page.selection.bar._row.get_child_count() == 2, true)
 	page._on_scrolled(0.0)
-	t.check("scrolling hides the selection bar", page._sel_bar.visible, false)
+	t.check("scrolling hides the selection bar", page.selection.bar.visible, false)
 	bar.queue_free()
 	contents_page.queue_free()
 	page.queue_free()
