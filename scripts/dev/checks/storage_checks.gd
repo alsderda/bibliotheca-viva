@@ -12,6 +12,7 @@ func run(t: Node) -> void:
 	_safefile(t)
 	_ids(t)
 	_replace(t)
+	_add_chapter(t)
 	_loader(t)
 	_rm(_scratch)
 
@@ -51,6 +52,18 @@ func _replace(t: Node) -> void:
 	t.check("no staging left behind", DirAccess.dir_exists_absolute(Library.book_dir(b.id) + "/staging"), false)
 	Library.remove_book(b.id, false)
 	_recover(t)
+
+
+func _add_chapter(t: Node) -> void:
+	var b := Library.add_book({"title": "Add chapter test", "kind": "web", "url": "https://example.com/atest",
+		"chapters": [{"title": "A", "url": "https://example.com/a/a"}]})
+	var before: float = b.modified
+	b.modified = before - 10
+	t.check("added chapter's index", Library.add_chapter(b.id, "B", "https://example.com/a/b"), 1)
+	t.check("added chapter at the end", Library.get_book(b.id).chapters.map(func(c): return c.title), ["A", "B"])
+	t.check("adding a chapter marks the book changed", Library.get_book(b.id).modified > before - 10, true)
+	t.check("no chapter added to a missing book", Library.add_chapter("no-such-book", "X", "https://example.com/x"), -1)
+	Library.remove_book(b.id, false)
 
 
 ## A kill mid-replace leaves staged files and maybe a manifest; the next call heals it.
@@ -148,8 +161,8 @@ func _loader(t: Node) -> void:
 	t.check("wrong-type progress starts at zero", bare.get("progress"), {"chapter": 0, "paragraph": 0})
 	t.check("wrong-type chapters read as none", bare.get("chapters"), [])
 	t.check("malformed bookmarks are dropped", bare.get("bookmarks"), [{"chapter": 1, "paragraph": 2}])
-	t.check("ratio of a normalised book", Library.progress_ratio(bare), 0.0)
-	t.check("normalised book not finished", Library.is_finished(bare), false)
+	t.check("ratio of a normalised book", BookStatus.progress_ratio(bare), 0.0)
+	t.check("normalised book not finished", BookStatus.is_finished(bare), false)
 
 	Library.books = keep_books
 	Library.tombstones = keep_tombs

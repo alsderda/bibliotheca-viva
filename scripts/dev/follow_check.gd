@@ -400,7 +400,7 @@ func _chunk_label_char(item: Dictionary, paragraph: int, sent: int) -> int:
 	var chunks := Speech.split({"text": item.tts, "kind": item.get("kind", "p")})
 	if sent < 0 or sent >= chunks.size():
 		return -1
-	var shown := ReaderPage._visible_text(item.bb)
+	var shown := ReaderMarkup.visible_text(item.bb)
 	var pos := _search_from if paragraph == _last_para else 0
 	for k in sent + 1:
 		pos = shown.find(chunks[k], pos)

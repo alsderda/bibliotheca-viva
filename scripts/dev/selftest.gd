@@ -110,16 +110,16 @@ func _versions() -> void:
 
 func _updates_filters() -> void:
 	var book := {"chapters": [{}, {}, {}], "progress": {"chapter": 1, "paragraph": 0}, "last_read": 100}
-	check("updates unread count", UpdatesPage.unread_count(book), 1)
-	check("updates chapter 0 read", UpdatesPage.is_unread(book, 0), false)
-	check("updates chapter 1 read", UpdatesPage.is_unread(book, 1), false)
-	check("updates chapter 2 unread", UpdatesPage.is_unread(book, 2), true)
+	check("updates unread count", BookStatus.unread_count(book), 1)
+	check("updates chapter 0 read", BookStatus.is_unread(book, 0), false)
+	check("updates chapter 1 read", BookStatus.is_unread(book, 1), false)
+	check("updates chapter 2 unread", BookStatus.is_unread(book, 2), true)
 	var done := {"chapters": [{}, {}, {}], "progress": {"chapter": 2, "paragraph": 0}, "last_read": 100}
-	check("updates caught up", UpdatesPage.unread_count(done), 0)
+	check("updates caught up", BookStatus.unread_count(done), 0)
 	var fresh := {"chapters": [{}, {}, {}], "progress": {"chapter": 0, "paragraph": 0}, "last_read": 0}
-	check("updates never opened", UpdatesPage.unread_count(fresh), 3)
-	check("updates never opened chapter 0 unread", UpdatesPage.is_unread(fresh, 0), true)
-	check("updates no chapters", UpdatesPage.unread_count({"chapters": [], "progress": {"chapter": 0, "paragraph": 0}, "last_read": 0}), 0)
+	check("updates never opened", BookStatus.unread_count(fresh), 3)
+	check("updates never opened chapter 0 unread", BookStatus.is_unread(fresh, 0), true)
+	check("updates no chapters", BookStatus.unread_count({"chapters": [], "progress": {"chapter": 0, "paragraph": 0}, "last_read": 0}), 0)
 
 
 ## Icons made while the app is in the background are re-uploaded on resume, into
@@ -157,10 +157,10 @@ func _book_search() -> void:
 	check("snippet marks the match", BookSearch.snippet("a [b] c", Vector2i(2, 5), "f00"), "a [b][color=f00][lb]b[rb][/color][/b] c")
 	check("snippet cuts at spaces", BookSearch.snippet("one two three four five", Vector2i(8, 13), "f00", 5), "…two [b][color=f00]three[/color][/b] four…")
 	var bb := "He [i]said[/i] [lb]hi[rb]"
-	var text := ReaderPage._visible_text(bb)
+	var text := ReaderMarkup.visible_text(bb)
 	check("search text has no tags", text, "He said [hi]")
 	var span: Vector2i = BookSearch.find_all(BookSearch.compile("said [hi", false), text)[0]
-	check("match marked across tags", ReaderPage._mark_span(bb, span.x, span.y, "<", ">"), "He [i]<said>[/i]< [lb]hi>[rb]")
+	check("match marked across tags", ReaderMarkup.mark_span(bb, span.x, span.y, "<", ">"), "He [i]<said>[/i]< [lb]hi>[rb]")
 
 
 func _sites() -> void:
@@ -180,29 +180,29 @@ func _sites() -> void:
 	_epub_matching()
 	_epub_only_chapters()
 	_series_parts()
-	check("tags cleaned from text", Library.clean_tags(" Fantasy, litrpg ,, fantasy,  Slow   burn "), ["Fantasy", "litrpg", "Slow burn"])
-	check("tags cleaned from a list", Library.clean_tags(["A", "", "a", "B"]), ["A", "B"])
-	check("tag match ignores case", Library.has_tag({"tags": ["LitRPG"]}, "litrpg"), true)
-	check("tag missing", Library.has_tag({"tags": []}, "litrpg"), false)
+	check("tags cleaned from text", BookTags.clean_tags(" Fantasy, litrpg ,, fantasy,  Slow   burn "), ["Fantasy", "litrpg", "Slow burn"])
+	check("tags cleaned from a list", BookTags.clean_tags(["A", "", "a", "B"]), ["A", "B"])
+	check("tag match ignores case", BookTags.has_tag({"tags": ["LitRPG"]}, "litrpg"), true)
+	check("tag missing", BookTags.has_tag({"tags": []}, "litrpg"), false)
 	var keep_books: Array = Library.books
 	Library.books = [
 		{"source": "file", "tags": ["Alpha", "Shared"]},
 		{"source": "web", "tags": ["Beta", "Shared"]},
 	]
-	check("all tags of file books", Library.all_tags("file"), ["Alpha", "Shared"])
-	check("all tags of web books", Library.all_tags("web"), ["Beta", "Shared"])
-	check("all tags without a source", Library.all_tags(), ["Alpha", "Beta", "Shared"])
+	check("all tags of file books", BookTags.all_tags("file"), ["Alpha", "Shared"])
+	check("all tags of web books", BookTags.all_tags("web"), ["Beta", "Shared"])
+	check("all tags without a source", BookTags.all_tags(), ["Alpha", "Beta", "Shared"])
 	Library.books = keep_books
 	var known := ["Dark fantasy", "Fantasy", "Finished", "LitRPG", "Sci-fi", "Urban Fantasy"]
-	check("tag matches by prefix first", Library.match_tags(known, [], "fa"), ["Fantasy", "Dark fantasy", "Urban Fantasy"])
-	check("tag matches ignore case", Library.match_tags(known, [], "LITR"), ["LitRPG"])
-	check("tag matches inside words last", Library.match_tags(known, [], "rpg"), ["LitRPG"])
-	check("tag matches after a dash", Library.match_tags(known, [], "fi"), ["Finished", "Sci-fi"])
-	check("tag matches skip tags the book has", Library.match_tags(known, ["fantasy"], "fan"), ["Dark fantasy", "Urban Fantasy"])
-	check("tag matches skip a finished tag", Library.match_tags(known, [], "Finished"), [])
-	check("tag match offers the right case", Library.match_tags(known, [], "finished"), ["Finished"])
-	check("no typing matches every new tag", Library.match_tags(known, ["LitRPG"], "").size(), 5)
-	var groups := Library.clean_aliases([
+	check("tag matches by prefix first", BookTags.match_tags(known, [], "fa"), ["Fantasy", "Dark fantasy", "Urban Fantasy"])
+	check("tag matches ignore case", BookTags.match_tags(known, [], "LITR"), ["LitRPG"])
+	check("tag matches inside words last", BookTags.match_tags(known, [], "rpg"), ["LitRPG"])
+	check("tag matches after a dash", BookTags.match_tags(known, [], "fi"), ["Finished", "Sci-fi"])
+	check("tag matches skip tags the book has", BookTags.match_tags(known, ["fantasy"], "fan"), ["Dark fantasy", "Urban Fantasy"])
+	check("tag matches skip a finished tag", BookTags.match_tags(known, [], "Finished"), [])
+	check("tag match offers the right case", BookTags.match_tags(known, [], "finished"), ["Finished"])
+	check("no typing matches every new tag", BookTags.match_tags(known, ["LitRPG"], "").size(), 5)
+	var groups := BookTags.clean_aliases([
 		{"tag": "Water", "aliases": "Hot water, Cold water"},
 		{"tag": "   ", "aliases": ["Nothing"]},
 		{"tag": "WATER", "aliases": ["Tap water"]},
@@ -216,10 +216,10 @@ func _sites() -> void:
 		{"tag": "Tea", "aliases": ["Green tea"]},
 		{"tag": "Coffee", "aliases": ["Espresso", "Latte"]},
 	])
-	check("alias maps to its main tag ignoring case", Library.resolve_tag(groups, "HOT water"), "Water")
-	check("alias of a later group maps too", Library.resolve_tag(groups, "green TEA"), "Tea")
-	check("main tag unchanged", Library.resolve_tag(groups, "Water"), "Water")
-	check("unknown tag unchanged", Library.resolve_tag(groups, "Soda"), "Soda")
+	check("alias maps to its main tag ignoring case", BookTags.resolve_tag(groups, "HOT water"), "Water")
+	check("alias of a later group maps too", BookTags.resolve_tag(groups, "green TEA"), "Tea")
+	check("main tag unchanged", BookTags.resolve_tag(groups, "Water"), "Water")
+	check("unknown tag unchanged", BookTags.resolve_tag(groups, "Soda"), "Soda")
 	check("page script builds", WebExtract.script().contains("function register("), true)
 	_site_rules()
 	_bookmarks()
@@ -241,13 +241,13 @@ func _epub_matching() -> void:
 		{"title": "Interlude", "url": "https://example.com/s/1/chapter/13"},
 		{"title": "Interlude", "url": "https://example.com/s/1/chapter/14"},
 	]}
-	var by_link := Library.match_epub_chapters(book, [
+	var by_link := EpubMatch.match_epub_chapters(book, [
 		{"title": "Information", "url": "https://example.com/s/1"},
 		{"title": "Renamed", "url": "https://www.example.com/s/1/chapter/12/"},
 		{"title": "Chapter 1 - Start", "url": "https://example.com/s/1/chapter/99"},
 	])
 	check("epub chapters match by link", by_link.map(func(p): return p[0]), [1])
-	var by_title := Library.match_epub_chapters(book, [
+	var by_title := EpubMatch.match_epub_chapters(book, [
 		{"title": "chapter 2 - middle", "url": ""},
 		{"title": "Interlude", "url": ""},
 		{"title": "CHAPTER 1: START!", "url": ""},
@@ -255,7 +255,7 @@ func _epub_matching() -> void:
 	check("epub chapters match by title, not ambiguous ones", by_title.map(func(p): return p[0]), [1, 0])
 	var numbered := {"chapters": [{"title": "1. Start", "url": "https://example.com/s/9/1/"}, {"title": "2. Chapter 2", "url": "https://example.com/s/9/2/"},
 		{"title": "3. Fallen", "url": "https://example.com/s/9/3/"}, {"title": "Chapter 4 - End", "url": "https://example.com/s/9/4/"}, {"title": "Chapter 44", "url": "https://example.com/s/9/44/"}]}
-	var by_numbered := Library.match_epub_chapters(numbered, [{"title": "Chapter 2", "url": ""}, {"title": "Start", "url": ""},
+	var by_numbered := EpubMatch.match_epub_chapters(numbered, [{"title": "Chapter 2", "url": ""}, {"title": "Start", "url": ""},
 		{"title": "Chapter 3", "url": ""}, {"title": "chapter 4", "url": ""}, {"title": "Chapter 5", "url": ""}])
 	check("epub chapters match numbered titles and placeholder titles", by_numbered.map(func(p): return p[0]), [1, 0, 2, 3])
 
@@ -276,7 +276,7 @@ func _epub_only_chapters() -> void:
 	check("epub-only chapters added", [r.filled, r.matched, r.added], [1, 2, 3])
 	b = Library.get_book(b.id)
 	check("epub-only chapters in their place", b.chapters.map(func(c): return c.title), ["0 - Prologue", "1 - Start", "2 - Gone", "3 - After", "4 - After", "5 - Later"])
-	check("epub-only chapters get a made-up link", b.chapters.map(func(c): return Library.is_epub_only(c)), [true, false, true, true, false, false])
+	check("epub-only chapters get a made-up link", b.chapters.map(func(c): return EpubMatch.is_epub_only(c)), [true, false, true, true, false, false])
 	check("epub-only chapter text saved", Library.load_chapter(b.id, 3).paragraphs, [long % 3])
 	check("chapter repeating a later one's passage added", Library.load_chapter(b.id, 2).paragraphs, [long % 4])
 	check("downloaded chapter moved along", Library.load_chapter(b.id, 4).paragraphs, [long % 4])
@@ -288,16 +288,16 @@ func _epub_only_chapters() -> void:
 
 ## A later EPUB of an imported serial (c486-496 after c1-485) adds only its new chapters.
 func _series_parts() -> void:
-	check("chapter range dropped from title", Library.series_title("The Path of Ascension - c486-496"), "The Path of Ascension")
-	check("chapters in brackets dropped", Library.series_title("Some Story (Chapters 1-50)"), "Some Story")
-	check("number-only title kept", Library.series_title("1984"), "1984")
+	check("chapter range dropped from title", EpubMatch.series_title("The Path of Ascension - c486-496"), "The Path of Ascension")
+	check("chapters in brackets dropped", EpubMatch.series_title("Some Story (Chapters 1-50)"), "Some Story")
+	check("number-only title kept", EpubMatch.series_title("1984"), "1984")
 	var book := {"title": "The Path Of Ascension", "author": "", "chapters": []}
-	check("same series without author", Library.same_series(book, {"title": "The Path of Ascension - c486-496", "author": "C. Mantis"}), true)
-	check("other book isn't the same series", Library.same_series(book, {"title": "The Path of Something", "author": ""}), false)
-	check("chapter number after the book's title", Library.number_key("The Path Of Ascension Chapter 485", "thepathofascension"), "|485")
-	check("side story keeps its name", Library.number_key("Poa: Aster’s Adventures Chapter 1", "thepathofascension"), "poaastersadventures|1")
-	check("chapter number at start", Library.number_key("12. A Title"), "|12")
-	check("no chapter number", Library.number_key("Volume 6"), "")
+	check("same series without author", EpubMatch.same_series(book, {"title": "The Path of Ascension - c486-496", "author": "C. Mantis"}), true)
+	check("other book isn't the same series", EpubMatch.same_series(book, {"title": "The Path of Something", "author": ""}), false)
+	check("chapter number after the book's title", EpubMatch.number_key("The Path Of Ascension Chapter 485", "thepathofascension"), "|485")
+	check("side story keeps its name", EpubMatch.number_key("Poa: Aster’s Adventures Chapter 1", "thepathofascension"), "poaastersadventures|1")
+	check("chapter number at start", EpubMatch.number_key("12. A Title"), "|12")
+	check("no chapter number", EpubMatch.number_key("Volume 6"), "")
 	var long_a := "A paragraph long enough to tell this chapter apart from every other chapter in the book."
 	var long_b := "Another paragraph long enough to tell this chapter apart from every other one in the book."
 	var have := [{"title": "Front Page"}, {"title": "Book Chapter 1"}, {"title": "Book Chapter 2"}, {"title": "Aster Plushies!"}]
@@ -310,9 +310,9 @@ func _series_parts() -> void:
 		{"title": "Interlude", "paragraphs": ["new too"]},
 	]
 	incoming.append({"title": "Side Story Chapter 1", "paragraphs": ["side"]})
-	check("only new chapters are added", Library.unseen_chapters(have, text, incoming, "book").map(func(c): return c.title), ["Chapter 3", "Interlude", "Side Story Chapter 1"])
+	check("only new chapters are added", EpubMatch.unseen_chapters(have, text, incoming, "book").map(func(c): return c.title), ["Chapter 3", "Interlude", "Side Story Chapter 1"])
 	var split := [{"title": "Chapter 7 (1/2)"}, {"title": "Chapter 7 (2/2)"}]
-	check("repeated numbers aren't used", Library.unseen_chapters(split, [[], []], [{"title": "Chapter 7", "paragraphs": [long_a]}]).size(), 1)
+	check("repeated numbers aren't used", EpubMatch.unseen_chapters(split, [[], []], [{"title": "Chapter 7", "paragraphs": [long_a]}]).size(), 1)
 	var mine := [{"title": "a", "url": ""}, {"title": "b", "url": ""}]
 	var longer := [{"title": "a", "url": ""}, {"title": "b", "url": ""}, {"title": "c", "url": ""}]
 	check("sync takes a longer list of an imported book", Sync._extended_chapters(mine, [{"chapters": longer}]).size(), 3)
@@ -405,19 +405,19 @@ func _sync_password() -> void:
 	var file := Settings.data_dir() + "/selftest_secret.dat"
 	var key := "selftest-key"
 	var pw := "p\u00e4ss \"word' $x;\n"
-	var where := Sync._write_password(pw, id, sealed, file, key)
+	var where := SyncSecret.write_password(pw, id, sealed, file, key)
 	check("password saved somewhere", where in ["keyring", "file"], true)
 	check("fallback file only without a keyring", FileAccess.file_exists(file), where == "file")
-	check("password read back", Sync._read_password(id, sealed, file, key), {"password": pw, "where": where})
+	check("password read back", SyncSecret.read_password(id, sealed, file, key), {"password": pw, "where": where})
 	Keyring.erase(id, sealed)
 	var f := FileAccess.open_encrypted_with_pass(file, FileAccess.WRITE, key)
 	f.store_string("old")
 	f.close()
-	check("old password file read", Sync._read_password(id, sealed, file, key).password, "old")
+	check("old password file read", SyncSecret.read_password(id, sealed, file, key).password, "old")
 	check("old password file moved when there's a keyring", FileAccess.file_exists(file), where == "file")
 	Keyring.erase(id, sealed)
 	DirAccess.remove_absolute(file)
-	check("nothing saved, nothing read", Sync._read_password(id, sealed, file, key), {"password": "", "where": ""})
+	check("nothing saved, nothing read", SyncSecret.read_password(id, sealed, file, key), {"password": "", "where": ""})
 
 
 ## Each saved chapter's word count is kept with the chapter and moves with it.
@@ -436,8 +436,8 @@ func _word_counts() -> void:
 	await Library._count_missing_words()
 	check("missing counts filled in from the saved text", b.chapters[0].get("words"), 3)
 	check("saved words added up", Library.saved_words(b), {"words": 3, "chapters": 1})
-	check("short count", [ReaderPage._short_count(950), ReaderPage._short_count(8400), ReaderPage._short_count(84321), ReaderPage._short_count(1200000)], ["950", "8.4k", "84k", "1.2M"])
-	check("grouped count", ReaderPage._grouped(1234567), "1,234,567")
+	check("short count", [ReaderDetails.short_count(950), ReaderDetails.short_count(8400), ReaderDetails.short_count(84321), ReaderDetails.short_count(1200000)], ["950", "8.4k", "84k", "1.2M"])
+	check("grouped count", ReaderDetails.grouped(1234567), "1,234,567")
 	Library.remove_book(b.id, false)
 
 
@@ -549,25 +549,25 @@ func _archive_favorite() -> void:
 	var b := Library.add_book({"title": "Archive test", "kind": "web", "url": "https://example.com/archtest",
 		"chapters": [{"title": "A", "url": "https://example.com/arch/1"}, {"title": "B", "url": "https://example.com/arch/2"}]})
 	Library.set_progress(b.id, 0, 1)
-	check("reading before archiving", Library.is_reading(Library.get_book(b.id)), true)
+	check("reading before archiving", BookStatus.is_reading(Library.get_book(b.id)), true)
 	check("most recently read", Library.last_read().get("id", ""), b.id)
 	Library.set_archived(b.id, true)
-	check("archived", Library.is_archived(Library.get_book(b.id)), true)
-	check("archived book isn't reading", Library.is_reading(Library.get_book(b.id)), false)
+	check("archived", BookStatus.is_archived(Library.get_book(b.id)), true)
+	check("archived book isn't reading", BookStatus.is_reading(Library.get_book(b.id)), false)
 	check("archived book isn't continue reading", Library.last_read().get("id", "") != b.id, true)
-	check("archived book isn't in Updates", UpdatesPage.followed().any(func(x): return x.id == b.id), false)
+	check("archived book isn't in Updates", BookStatus.followed().any(func(x): return x.id == b.id), false)
 	Library.set_favorite(b.id, true)
 	var file: Dictionary = Sync._book_file(Library.get_book(b.id), "")
 	check("archived in the synced file", file.get("archived", false), true)
 	check("favorite in the synced file", file.get("favorite", false), true)
 	check("status changes stamped in the synced file", (file.get("status_set", {}) as Dictionary).keys().size(), 2)
 	Library.set_archived(b.id, false)
-	check("unarchived", Library.is_archived(Library.get_book(b.id)), false)
-	check("favorite kept through the archive", Library.is_favorite(Library.get_book(b.id)), true)
-	check("reading again after unarchiving", Library.is_reading(Library.get_book(b.id)), true)
-	check("back in Updates after unarchiving", UpdatesPage.followed().any(func(x): return x.id == b.id), true)
+	check("unarchived", BookStatus.is_archived(Library.get_book(b.id)), false)
+	check("favorite kept through the archive", BookStatus.is_favorite(Library.get_book(b.id)), true)
+	check("reading again after unarchiving", BookStatus.is_reading(Library.get_book(b.id)), true)
+	check("back in Updates after unarchiving", BookStatus.followed().any(func(x): return x.id == b.id), true)
 	Library.set_favorite(b.id, false)
-	check("unfavorited", Library.is_favorite(Library.get_book(b.id)), false)
+	check("unfavorited", BookStatus.is_favorite(Library.get_book(b.id)), false)
 	Library.remove_book(b.id, false)
 
 
@@ -698,8 +698,8 @@ func _sentences() -> void:
 		["Mr. Smith went home.", "He said “Hi!”", "Then J. R. left…", "Done"])
 	check("invisible filler paragraph is skipped", Array(Speech.split({"text": "ㅤ ​", "kind": "p"})), [])
 	var bb := "One [i]two. Three[/i] [lb]4[rb]."
-	check("visible text", ReaderPage._visible_text(bb), "One two. Three [4].")
-	check("mark sentence across tags", ReaderPage._mark_span(bb, 9, 19, "<", ">"), "One [i]two. <Three>[/i]< [lb]4[rb].>")
+	check("visible text", ReaderMarkup.visible_text(bb), "One two. Three [4].")
+	check("mark sentence across tags", ReaderMarkup.mark_span(bb, 9, 19, "<", ">"), "One [i]two. <Three>[/i]< [lb]4[rb].>")
 	check("resume offset snaps to the cut word's start", LinuxVoice.resume_offset("Hello brave world", 9), 6)
 	check("resume offset at a word start stays", LinuxVoice.resume_offset("Hello brave world", 6), 6)
 	check("resume offset inside the first word restarts", LinuxVoice.resume_offset("Hello world", 3), 0)

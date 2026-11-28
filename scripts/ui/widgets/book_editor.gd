@@ -61,7 +61,7 @@ func _build(book: Dictionary) -> void:
 	if "author" in editable:
 		_author = _field(_body, "Author", book.get("author", ""), "Unknown")
 	_tags = _field(_body, "Tags", ", ".join(PackedStringArray(book.get("tags", []))), "Separate tags with commas, e.g. Fantasy, Finished")
-	_suggest = TagSuggest.attach(_tags, func(): return [Library.book_tags(), []])
+	_suggest = TagSuggest.attach(_tags, func(): return [BookTags.book_tags(), []])
 	_suggest.refreshed.connect(_fit, CONNECT_DEFERRED)
 	_body.add_child(_suggest)
 

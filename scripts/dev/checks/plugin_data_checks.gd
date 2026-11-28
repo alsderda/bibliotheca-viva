@@ -103,12 +103,12 @@ func _details(t: Node) -> void:
 	t.check("imported edit leaves tags_set alone", f.get("tags_set", false), false)
 	Library.remove_book(b.id, false)
 	Library.remove_book(f.id, false)
-	t.check("no plugin means the book's tags", Library.picker_tags({"source": "selftest-ghost", "tags": ["Mine"], "tags_set": false}), ["Mine"])
+	t.check("no plugin means the book's tags", BookTags.picker_tags({"source": "selftest-ghost", "tags": ["Mine"], "tags_set": false}), ["Mine"])
 	var stub := StubTags.new()
 	stub.id = "selftest-stub"
 	Plugins.plugins.append(stub)
-	t.check("picker offers the plugin's tags", Library.picker_tags({"source": "selftest-stub", "tags": ["Mine"], "tags_set": false}), ["Offered"])
-	t.check("hand-set tags win over the plugin's", Library.picker_tags({"source": "selftest-stub", "tags": ["Mine"], "tags_set": true}), ["Mine"])
+	t.check("picker offers the plugin's tags", BookTags.picker_tags({"source": "selftest-stub", "tags": ["Mine"], "tags_set": false}), ["Offered"])
+	t.check("hand-set tags win over the plugin's", BookTags.picker_tags({"source": "selftest-stub", "tags": ["Mine"], "tags_set": true}), ["Mine"])
 	Plugins.plugins.erase(stub)
 
 

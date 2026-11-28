@@ -62,9 +62,9 @@ static func completed_text(text: String, caret: int, tag: String, typing: bool, 
 		return [tag, tag.length()]
 	var parts := Array(text.split(","))
 	var at := typed_index(text, caret) if typing else parts.size()
-	var before := Library.clean_tags(parts.slice(0, at) + [tag])
+	var before := BookTags.clean_tags(parts.slice(0, at) + [tag])
 	var after := parts.slice(at + 1)
-	var all := Library.clean_tags(before + after)
+	var all := BookTags.clean_tags(before + after)
 	var done := ", ".join(PackedStringArray(all))
 	if all.size() == before.size():  # nothing after it: ready for the next tag
 		done += ", "
@@ -88,10 +88,10 @@ func refresh() -> void:
 		var parts := Array(_edit.text.split(","))
 		var rest := parts.duplicate()
 		rest.remove_at(clampi(typed_index(_edit.text, _edit.caret_column), 0, parts.size() - 1))
-		have = Library.clean_tags(rest) + Library.clean_tags(extra)
+		have = BookTags.clean_tags(rest) + BookTags.clean_tags(extra)
 	else:
-		have = Library.clean_tags(Array(_edit.text.split(","))) + Library.clean_tags(extra)
-	_matches = Library.match_tags(all, have, typed).slice(0, 12)
+		have = BookTags.clean_tags(Array(_edit.text.split(","))) + BookTags.clean_tags(extra)
+	_matches = BookTags.match_tags(all, have, typed).slice(0, 12)
 	UI.clear(self)
 	if not _matches.is_empty():
 		var hint := "Add:" if typed == "" else ("Matches:" if OS.has_feature("mobile") else "Tab to complete:")

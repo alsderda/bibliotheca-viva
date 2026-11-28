@@ -42,7 +42,7 @@ const DEFAULTS := {
 	"web_save_as_you_go": true,     # store chapters you open in the Web tab in the library
 	"saved_searches": [],           # see SavedSearches
 	"site_rules": [],               # see SiteRules
-	"tag_aliases": [],              # [{tag, aliases: [..]}]: aliases count as their main tag (see Library.clean_aliases)
+	"tag_aliases": [],              # [{tag, aliases: [..]}]: aliases count as their main tag (see BookTags.clean_aliases)
 	"http_revalidate": true,        # ask sites whether a kept page changed, and reuse it if not (see Net)
 	"http_keep_waits": true,        # a wait a site asked for (Retry-After) still holds after a restart (see Net)
 	"plugins_off": [],              # ids of plugins switched off

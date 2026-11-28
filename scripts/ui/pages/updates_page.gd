@@ -79,7 +79,7 @@ func refresh_all() -> void:
 	var errors := 0
 	var skipped := 0
 	var started := Time.get_ticks_msec()
-	var books := followed()
+	var books := BookStatus.followed()
 	_checked = 0
 	_to_check = books.size()
 	header_changed.emit()
@@ -105,18 +105,12 @@ func refresh_all() -> void:
 	header_changed.emit()
 
 
-## The web serials Updates shows and checks. Archived ones are left out, and
-## only the chapter list's Check for new button in the reader checks them.
-static func followed() -> Array:
-	return Library.books.filter(func(b): return b.kind == "web" and not Library.is_archived(b))
-
-
 func _rebuild() -> void:
 	UI.clear(_content)
 	if tab == SEARCHES_TAB:
 		_searches()
 		return
-	var books := followed()
+	var books := BookStatus.followed()
 	if books.is_empty():
 		var col := UI.vbox(8)
 		if Library.books.any(func(b): return b.kind == "web"):
@@ -132,14 +126,6 @@ func _rebuild() -> void:
 		_latest(books)
 	else:
 		_following(books)
-
-
-static func is_unread(book: Dictionary, index: int) -> bool:
-	return index > book.progress.chapter or book.last_read == 0
-
-
-static func unread_count(book: Dictionary) -> int:
-	return maxi(0, book.chapters.size() - (book.progress.chapter + 1 if book.last_read > 0 else 0))
 
 
 func _filter_row(text: String, key: String, tip: String) -> Control:
@@ -169,7 +155,7 @@ func _latest(books: Array) -> void:
 			entries.append({"book": b, "index": i, "date": float(b.chapters[i].get("date", 0))})
 	entries.sort_custom(func(a, c): return a.date > c.date if a.date != c.date else a.index > c.index)
 	if hide:
-		entries = entries.filter(func(e): return is_unread(e.book, e.index))
+		entries = entries.filter(func(e): return BookStatus.is_unread(e.book, e.index))
 	var last_group := ""
 	var shown := 0
 	for e in entries.slice(0, 40):
@@ -222,7 +208,7 @@ func _chapter_row(book: Dictionary, index: int, date: float) -> Control:
 	sub.custom_minimum_size.x = 80
 	info.add_child(sub)
 	row.add_child(info)
-	var unread: bool = is_unread(book, index)
+	var unread: bool = BookStatus.is_unread(book, index)
 	if unread:
 		row.add_child(UI.chip("Unread", UiTheme.ACCENT))
 	var cached: bool = Library.has_chapter(book.id, index) and not Library.load_chapter(book.id, index).get("excerpt", false)
@@ -245,7 +231,7 @@ func _following(books: Array) -> void:
 	flow.add_theme_constant_override("v_separation", 16)
 	var shown := 0
 	for b in books:
-		if hide and unread_count(b) == 0:
+		if hide and BookStatus.unread_count(b) == 0:
 			continue
 		shown += 1
 		var card := UI.panel("Card")
@@ -263,8 +249,8 @@ func _following(books: Array) -> void:
 		t.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		t.custom_minimum_size.x = 120
 		col.add_child(t)
-		col.add_child(UI.label(BookCard._source_name(b) + ("  ·  RSS" if b.get("rss_only") else "") + ("  ·  Some chapters may be missing" if b.get("possible_gap", false) else ""), "Small"))
-		var unread: int = unread_count(b)
+		col.add_child(UI.label(BookStatus.source_name(b) + ("  ·  RSS" if b.get("rss_only") else "") + ("  ·  Some chapters may be missing" if b.get("possible_gap", false) else ""), "Small"))
+		var unread: int = BookStatus.unread_count(b)
 		col.add_child(UI.label("%d chapters  ·  %d unread" % [b.chapters.size(), unread], "Muted"))
 		col.add_child(UI.label("Checked " + UI.relative_time(b.get("last_checked", 0)), "Small"))
 		var actions := UI.hbox(8)
